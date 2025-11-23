@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import aiofiles
 from pathlib import Path
 import uuid
@@ -52,6 +52,19 @@ class UserResponse(BaseModel):
     bio: Optional[str]
     profile_picture: Optional[str]
     email: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class SimpleUserResponse(BaseModel):
+    """Simple user info for follow lists"""
+    id: int
+    nickname: Optional[str]
+    first_name: Optional[str]
+    last_name: Optional[str]
+    profile_picture: Optional[str]
+    employer: Optional[str]
 
     class Config:
         from_attributes = True
@@ -223,3 +236,59 @@ async def unfollow_user(
     await db.commit()
 
     return {"status": "success"}
+
+
+@router.get("/me/following", response_model=List[SimpleUserResponse])
+async def get_following(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Get list of users current user is following"""
+    result = await db.execute(
+        select(User).join(
+            Follow, Follow.following_id == User.id
+        ).where(Follow.follower_id == current_user.id)
+    )
+    users = result.scalars().all()
+    return users
+
+
+@router.get("/me/followers", response_model=List[SimpleUserResponse])
+async def get_followers(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Get list of users following current user"""
+    result = await db.execute(
+        select(User).join(
+            Follow, Follow.follower_id == User.id
+        ).where(Follow.following_id == current_user.id)
+    )
+    users = result.scalars().all()
+    return users
+
+
+@router.get("/{user_id}/profile", response_model=ProfileResponse)
+async def get_user_profile(
+    user_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get another user's profile"""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return ProfileResponse(
+        id=user.id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        nickname=user.nickname,
+        employer=user.employer,
+        phone=user.phone,
+        email=user.email,
+        profile_picture=user.profile_picture,
+        has_profile=user.has_profile
+    )
