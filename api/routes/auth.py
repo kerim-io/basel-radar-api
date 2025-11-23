@@ -1,0 +1,180 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime, timedelta
+
+from db.database import get_async_session
+from db.models import User, RefreshToken
+from services.auth_service import create_access_token, create_refresh_token, decode_token
+from services.apple_auth import verify_apple_token
+from core.config import settings
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+PASSCODE = "ARTBASEL2024"
+
+
+class AppleAuthRequest(BaseModel):
+    code: str
+    redirect_uri: str
+
+
+class PasscodeAuthRequest(BaseModel):
+    passcode: str
+    username: Optional[str] = None
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user_id: int
+    email: Optional[str]
+    has_profile: bool
+
+
+@router.post("/apple", response_model=AuthResponse)
+async def apple_signin(
+    request: AppleAuthRequest,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Sign in with Apple - validates code with Apple servers"""
+    try:
+        # Verify Apple token
+        apple_data = await verify_apple_token(request.code, request.redirect_uri)
+        apple_user_id = apple_data["user_id"]
+        email = apple_data.get("email")
+
+        # Check if user exists
+        result = await db.execute(
+            select(User).where(User.apple_user_id == apple_user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        # Create user if doesn't exist
+        if not user:
+            user = User(
+                apple_user_id=apple_user_id,
+                email=email,
+                username=email.split("@")[0] if email else f"user_{apple_user_id[:8]}",
+                is_active=True
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+
+        # Create tokens
+        access_token = create_access_token({"sub": str(user.id)})
+        refresh_token_str = create_refresh_token({"sub": str(user.id)})
+
+        # Store refresh token
+        refresh_token_obj = RefreshToken(
+            user_id=user.id,
+            token=refresh_token_str,
+            expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        db.add(refresh_token_obj)
+
+        # Update user's Apple refresh token
+        user.refresh_token = apple_data.get("refresh_token")
+        await db.commit()
+
+        return AuthResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user_id=user.id,
+            email=user.email,
+            has_profile=user.has_profile
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Apple authentication failed: {str(e)}"
+        )
+
+
+@router.post("/passcode", response_model=AuthResponse)
+async def passcode_auth(
+    request: PasscodeAuthRequest,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Auth with passcode fallback (ARTBASEL2024)"""
+    if request.passcode != PASSCODE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid passcode"
+        )
+
+    # Create/get guest user
+    username = request.username or f"guest_{datetime.utcnow().timestamp()}"
+    guest_id = f"passcode_{username}"
+
+    result = await db.execute(
+        select(User).where(User.apple_user_id == guest_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = User(
+            apple_user_id=guest_id,
+            username=username,
+            is_active=True
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    # Create tokens
+    access_token = create_access_token({"sub": str(user.id)})
+
+    return AuthResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user_id=user.id,
+        email=user.email,
+        has_profile=user.has_profile
+    )
+
+
+@router.post("/apple/refresh", response_model=AuthResponse)
+async def refresh_token_endpoint(
+    request: AppleAuthRequest,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Refresh access token"""
+    try:
+        payload = decode_token(request.code)
+        user_id = int(payload.get("sub"))
+
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        access_token = create_access_token({"sub": str(user.id)})
+        refresh_token_str = create_refresh_token({"sub": str(user.id)})
+
+        refresh_token_obj = RefreshToken(
+            user_id=user.id,
+            token=refresh_token_str,
+            expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        db.add(refresh_token_obj)
+        await db.commit()
+
+        return AuthResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user_id=user.id,
+            email=user.email,
+            has_profile=user.has_profile
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token refresh failed: {str(e)}"
+        )
