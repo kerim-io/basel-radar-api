@@ -17,6 +17,7 @@ router = APIRouter(prefix="/livestream", tags=["livestream"])
 logger = logging.getLogger(__name__)
 
 MEDIA_SERVER_URL = os.getenv("MEDIA_SERVER_URL", "http://localhost:9001")
+MEDIA_SERVER_WS_URL = os.getenv("MEDIA_SERVER_WS_URL", "ws://localhost:9002")
 
 # Health check cache to prevent log spam
 _media_server_health = {
@@ -154,7 +155,7 @@ async def start_livestream(
                         extra={"user_id": user_id, "room_id": room_id, "livestream_id": livestream.id}
                     )
 
-                    websocket_url = f"ws://localhost:9001/room/{room_id}/host"
+                    websocket_url = f"{MEDIA_SERVER_WS_URL}/room/{room_id}/host"
 
                     return StartStreamResponse(
                         room_id=room_id,

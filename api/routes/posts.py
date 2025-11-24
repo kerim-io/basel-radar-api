@@ -104,7 +104,7 @@ async def upload_image(
         "Image uploaded successfully",
         extra={
             "user_id": current_user.id,
-            "filename": unique_filename,
+            "uploaded_filename": unique_filename,
             "size_bytes": len(contents),
             "mime_type": file.content_type
         }

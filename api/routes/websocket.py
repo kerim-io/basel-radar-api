@@ -103,33 +103,28 @@ async def websocket_feed(websocket: WebSocket, token: str = Query(...)):
         # Accept connection
         await manager.connect(websocket, user_id)
 
-        # Send initial feed
+        # Send initial feed with optimized query
+        from sqlalchemy import case
+
+        # Single optimized query with aggregations
         result = await db.execute(
-            select(Post, User)
+            select(
+                Post,
+                User,
+                func.count(Like.id).label('likes_count'),
+                func.max(case((Like.user_id == user_id, 1), else_=0)).label('is_liked')
+            )
             .join(User, Post.user_id == User.id)
+            .outerjoin(Like, Post.id == Like.post_id)
+            .group_by(Post.id, User.id)
             .order_by(desc(Post.created_at))
             .limit(50)
         )
         posts_data = result.all()
 
-        # Build initial feed with likes data
+        # Build initial feed
         initial_feed = []
-        for post, user in posts_data:
-            # Get likes count
-            likes_count_result = await db.execute(
-                select(func.count(Like.id)).where(Like.post_id == post.id)
-            )
-            likes_count = likes_count_result.scalar() or 0
-
-            # Check if current user liked this post
-            user_like_result = await db.execute(
-                select(Like).where(
-                    Like.post_id == post.id,
-                    Like.user_id == user_id
-                )
-            )
-            is_liked = user_like_result.scalar_one_or_none() is not None
-
+        for post, user, likes_count, is_liked in posts_data:
             initial_feed.append({
                 "id": post.id,
                 "user_id": post.user_id,
@@ -141,8 +136,8 @@ async def websocket_feed(websocket: WebSocket, token: str = Query(...)):
                 "media_type": post.media_type,
                 "latitude": post.latitude,
                 "longitude": post.longitude,
-                "likes_count": likes_count,
-                "is_liked_by_current_user": is_liked
+                "likes_count": likes_count or 0,
+                "is_liked_by_current_user": bool(is_liked)
             })
 
         await websocket.send_json({
