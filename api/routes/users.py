@@ -12,9 +12,10 @@ from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, Post, Like, CheckIn, RefreshToken
+from db.models import User, Follow, Post, Like, CheckIn, RefreshToken, AnonymousLocation
 from api.dependencies import get_current_user
 from core.config import settings
+from api.routes.websocket import broadcast_location_update
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -411,7 +412,38 @@ async def update_location(
     can_post = distance_km <= basel_radius_km
     current_user.can_post = can_post
 
+    # Create or update anonymous location for map
+    # Generate consistent UUID for this user's anonymous location
+    location_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, f"bitbasel-user-{current_user.id}")
+
+    # Check if anonymous location already exists
+    result = await db.execute(
+        select(AnonymousLocation).where(AnonymousLocation.location_id == location_uuid)
+    )
+    anon_location = result.scalar_one_or_none()
+
+    if anon_location:
+        # Update existing location
+        anon_location.latitude = location.latitude
+        anon_location.longitude = location.longitude
+        anon_location.last_updated = datetime.utcnow()
+    else:
+        # Create new anonymous location
+        anon_location = AnonymousLocation(
+            location_id=location_uuid,
+            latitude=location.latitude,
+            longitude=location.longitude
+        )
+        db.add(anon_location)
+
     await db.commit()
+
+    # Broadcast location update to all WebSocket clients for real-time map
+    await broadcast_location_update(
+        location_id=str(location_uuid),
+        latitude=location.latitude,
+        longitude=location.longitude
+    )
 
     if can_post:
         return LocationResponse(

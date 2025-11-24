@@ -12,6 +12,7 @@ namespace onlylang {
 
 class RoomManager;
 class StreamingServer;
+class WebSocketServer;
 
 struct HttpRequest {
     std::string method;
@@ -56,6 +57,7 @@ public:
     bool is_running() const { return running_; }
 
     void register_route(const std::string& method, const std::string& path, RouteHandler handler);
+    void set_websocket_server(std::shared_ptr<WebSocketServer> ws_server) { websocket_server_ = ws_server; }
 
 private:
     std::string host_;
@@ -63,6 +65,7 @@ private:
     std::atomic<bool> running_;
     std::shared_ptr<RoomManager> room_manager_;
     std::shared_ptr<StreamingServer> streaming_server_;
+    std::shared_ptr<WebSocketServer> websocket_server_;
 
     int server_socket_;
     std::thread accept_thread_;
@@ -78,6 +81,10 @@ private:
 
     bool match_route(const std::string& method, const std::string& path,
                      RouteHandler& handler, std::map<std::string, std::string>& params);
+
+    bool is_websocket_upgrade(const HttpRequest& req);
+    bool handle_websocket_upgrade(int client_socket, const HttpRequest& req);
+    std::string compute_websocket_accept(const std::string& key);
 
     HttpResponse handle_create_room(const HttpRequest& req);
     HttpResponse handle_delete_room(const HttpRequest& req);

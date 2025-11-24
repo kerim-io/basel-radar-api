@@ -14,7 +14,7 @@ bool RoomManager::create_room(const std::string& room_id, const std::string& pos
 
     Room room;
     room.room_id = room_id;
-    room.post_id = post_id;  // Changed from classroom_id
+    room.post_id = post_id;
     room.host_user_id = host_user_id;
     room.is_active = true;
     room.created_at = std::chrono::steady_clock::now();

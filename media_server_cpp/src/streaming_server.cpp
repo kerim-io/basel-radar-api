@@ -1,5 +1,6 @@
 #include "streaming_server.h"
 #include "http_server.h"
+#include "websocket_server.h"
 #include <iostream>
 #include <sstream>
 #include <random>
@@ -32,6 +33,15 @@ bool StreamingServer::initialize(const StreamingConfig& config) {
         shared_from_this()
     );
 
+    websocket_server_ = std::make_shared<WebSocketServer>(
+        shared_from_this(),
+        config.host,
+        config.websocket_port
+    );
+
+    // Connect HTTP server to WebSocket server for upgrade handling
+    http_server_->set_websocket_server(websocket_server_);
+
     initialized_ = true;
     return true;
 }
@@ -51,6 +61,12 @@ bool StreamingServer::start() {
         return false;
     }
 
+    if (!websocket_server_->start()) {
+        std::cerr << "Failed to start WebSocket server" << std::endl;
+        http_server_->stop();
+        return false;
+    }
+
     running_ = true;
     std::cout << "Streaming server started successfully" << std::endl;
 
@@ -63,6 +79,10 @@ void StreamingServer::stop() {
     }
 
     running_ = false;
+
+    if (websocket_server_) {
+        websocket_server_->stop();
+    }
 
     if (http_server_) {
         http_server_->stop();

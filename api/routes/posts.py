@@ -1,15 +1,57 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+import uuid
+from pathlib import Path
 
 from db.database import get_async_session
 from db.models import Post, User, Like
 from api.dependencies import get_current_user
+from core.config import settings
 
 router = APIRouter(prefix="/posts", tags=["posts"])
+
+
+@router.post("/upload")
+async def upload_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Upload an image and return the URL"""
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only image files are allowed"
+        )
+
+    # Validate file size (10MB max)
+    contents = await file.read()
+    if len(contents) > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE} bytes"
+        )
+
+    # Generate unique filename
+    file_extension = Path(file.filename).suffix if file.filename else ".jpg"
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+
+    # Save file
+    upload_path = Path(settings.UPLOAD_DIR) / unique_filename
+    with open(upload_path, "wb") as f:
+        f.write(contents)
+
+    # Return URL
+    file_url = f"/files/{unique_filename}"
+
+    return {
+        "url": file_url,
+        "filename": unique_filename
+    }
 
 
 class PostCreate(BaseModel):

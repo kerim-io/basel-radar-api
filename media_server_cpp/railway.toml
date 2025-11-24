@@ -1,0 +1,21 @@
+# Railway.toml for C++ Media Server (WebRTC Livestreaming)
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "./media_server"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Health check configuration
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+
+# NOTE: This service requires WebRTC library to be built
+# See media_server_cpp/README.md for build instructions
+#
+# IMPORTANT: If WebRTC dependencies are not available,
+# this service may fail to build. Consider deploying as
+# a separate project or using a pre-built container.

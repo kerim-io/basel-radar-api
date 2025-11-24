@@ -1,6 +1,7 @@
 #include "http_server.h"
 #include "room_manager.h"
 #include "streaming_server.h"
+#include "websocket_server.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -10,6 +11,13 @@
 #include <sstream>
 #include <cstring>
 #include <vector>
+#include <iomanip>
+#include <algorithm>
+#include <chrono>
+#include <openssl/sha.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/buffer.h>
 
 namespace onlylang {
 
@@ -143,25 +151,88 @@ void HttpServer::handle_client(int client_socket) {
         tv.tv_usec = 0;
         setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-        constexpr size_t MAX_REQUEST_SIZE = 8192;
+        constexpr size_t MAX_REQUEST_SIZE = 16384;
+        std::string raw_request;
         std::vector<char> buffer(MAX_REQUEST_SIZE);
-        ssize_t bytes_read = read(client_socket, buffer.data(), buffer.size() - 1);
 
-        if (bytes_read < 0) {
-            std::cerr << "Error reading from socket: " << strerror(errno) << std::endl;
+        // Read all available data (headers + body)
+        ssize_t total_bytes = 0;
+        while (true) {
+            ssize_t bytes_read = read(client_socket, buffer.data(), buffer.size());
+
+            if (bytes_read < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;  // No more data available
+                }
+                std::cerr << "Error reading from socket: " << strerror(errno) << std::endl;
+                close(client_socket);
+                return;
+            }
+
+            if (bytes_read == 0) {
+                break;  // Connection closed
+            }
+
+            raw_request.append(buffer.data(), bytes_read);
+            total_bytes += bytes_read;
+
+            // Check if we have complete request (headers + body)
+            size_t header_end = raw_request.find("\r\n\r\n");
+            if (header_end != std::string::npos) {
+                // Found end of headers, check if we have full body
+                std::string headers = raw_request.substr(0, header_end);
+                size_t content_length = 0;
+
+                // Extract Content-Length
+                size_t cl_pos = headers.find("Content-Length:");
+                if (cl_pos == std::string::npos) {
+                    cl_pos = headers.find("content-length:");
+                }
+                if (cl_pos != std::string::npos) {
+                    size_t value_start = cl_pos + 15;  // length of "Content-Length:"
+                    while (value_start < headers.length() &&
+                           (headers[value_start] == ' ' || headers[value_start] == '\t')) {
+                        value_start++;
+                    }
+                    size_t value_end = headers.find('\r', value_start);
+                    if (value_end != std::string::npos) {
+                        std::string cl_str = headers.substr(value_start, value_end - value_start);
+                        content_length = std::stoul(cl_str);
+                    }
+                }
+
+                size_t body_start = header_end + 4;  // Skip "\r\n\r\n"
+                size_t current_body_length = raw_request.length() - body_start;
+
+                if (current_body_length >= content_length) {
+                    // We have the complete request
+                    break;
+                }
+            }
+
+            // Prevent infinite loops and DoS
+            if (total_bytes >= MAX_REQUEST_SIZE) {
+                break;
+            }
+        }
+
+        if (raw_request.empty()) {
             close(client_socket);
             return;
         }
-
-        if (bytes_read == 0) {
-            close(client_socket);
-            return;
-        }
-
-        buffer[bytes_read] = '\0';
-        std::string raw_request(buffer.data(), bytes_read);
 
         HttpRequest request = parse_request(raw_request);
+
+        // Check if this is a WebSocket upgrade request
+        if (is_websocket_upgrade(request)) {
+            if (handle_websocket_upgrade(client_socket, request)) {
+                // WebSocket connection established, don't close the socket
+                return;
+            }
+            // If upgrade failed, close the socket
+            close(client_socket);
+            return;
+        }
 
         RouteHandler handler;
         std::map<std::string, std::string> params;
@@ -318,52 +389,54 @@ bool HttpServer::match_route(const std::string& method, const std::string& path,
 HttpResponse HttpServer::handle_create_room(const HttpRequest& req) {
     HttpResponse response;
 
+    // Debug logging
+    std::cout << "=== CREATE ROOM REQUEST ===" << std::endl;
+    std::cout << "Body length: " << req.body.length() << std::endl;
+    std::cout << "Body: [" << req.body << "]" << std::endl;
+    std::cout << "=========================" << std::endl;
+
     std::string post_id;
     std::string host_user_id;
 
-    // Parse post_id (also accept classroom_id for backwards compatibility)
-    size_t post_pos = req.body.find("\"post_id\":\"");
-    size_t classroom_pos = req.body.find("\"classroom_id\":\"");
-
+    // Parse post_id (handle both "post_id":"value" and "post_id": "value")
+    size_t post_pos = req.body.find("\"post_id\"");
     if (post_pos != std::string::npos) {
-        size_t start = post_pos + 11;
-        if (start < req.body.length()) {
-            size_t end = req.body.find("\"", start);
-            if (end != std::string::npos && end > start) {
-                post_id = req.body.substr(start, end - start);
-                if (post_id.length() > 256) {
-                    response.set_error(400, "post_id too long");
-                    return response;
-                }
-            }
-        }
-    } else if (classroom_pos != std::string::npos) {
-        // Backwards compatibility with classroom_id
-        size_t start = classroom_pos + 16;
-        if (start < req.body.length()) {
-            size_t end = req.body.find("\"", start);
-            if (end != std::string::npos && end > start) {
-                post_id = req.body.substr(start, end - start);
-                if (post_id.length() > 256) {
-                    response.set_error(400, "post_id too long");
-                    return response;
+        size_t colon_pos = req.body.find(":", post_pos);
+        if (colon_pos != std::string::npos) {
+            size_t quote_start = req.body.find("\"", colon_pos);
+            if (quote_start != std::string::npos) {
+                size_t start = quote_start + 1;
+                if (start < req.body.length()) {
+                    size_t end = req.body.find("\"", start);
+                    if (end != std::string::npos && end > start) {
+                        post_id = req.body.substr(start, end - start);
+                        if (post_id.length() > 256) {
+                            response.set_error(400, "post_id too long");
+                            return response;
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Parse host_user_id with bounds checking
-    size_t host_pos = req.body.find("\"host_user_id\":\"");
+    // Parse host_user_id (handle both "host_user_id":"value" and "host_user_id": "value")
+    size_t host_pos = req.body.find("\"host_user_id\"");
     if (host_pos != std::string::npos) {
-        size_t start = host_pos + 16;
-        if (start < req.body.length()) {
-            size_t end = req.body.find("\"", start);
-            if (end != std::string::npos && end > start) {
-                host_user_id = req.body.substr(start, end - start);
-                // Limit length to prevent DoS
-                if (host_user_id.length() > 256) {
-                    response.set_error(400, "host_user_id too long");
-                    return response;
+        size_t colon_pos = req.body.find(":", host_pos);
+        if (colon_pos != std::string::npos) {
+            size_t quote_start = req.body.find("\"", colon_pos);
+            if (quote_start != std::string::npos) {
+                size_t start = quote_start + 1;
+                if (start < req.body.length()) {
+                    size_t end = req.body.find("\"", start);
+                    if (end != std::string::npos && end > start) {
+                        host_user_id = req.body.substr(start, end - start);
+                        if (host_user_id.length() > 256) {
+                            response.set_error(400, "host_user_id too long");
+                            return response;
+                        }
+                    }
                 }
             }
         }
@@ -460,6 +533,129 @@ HttpResponse HttpServer::handle_health_check(const HttpRequest& req) {
     HttpResponse response;
     response.set_json("{\"status\":\"healthy\",\"service\":\"media_server\"}");
     return response;
+}
+
+bool HttpServer::is_websocket_upgrade(const HttpRequest& req) {
+    // Check for WebSocket upgrade headers
+    auto upgrade_it = req.headers.find("Upgrade");
+    auto connection_it = req.headers.find("Connection");
+    auto ws_key_it = req.headers.find("Sec-WebSocket-Key");
+
+    if (upgrade_it == req.headers.end() || connection_it == req.headers.end() || ws_key_it == req.headers.end()) {
+        return false;
+    }
+
+    // Case-insensitive comparison for "websocket"
+    std::string upgrade_val = upgrade_it->second;
+    std::transform(upgrade_val.begin(), upgrade_val.end(), upgrade_val.begin(), ::tolower);
+
+    return upgrade_val.find("websocket") != std::string::npos;
+}
+
+std::string HttpServer::compute_websocket_accept(const std::string& key) {
+    // WebSocket protocol magic string
+    const std::string magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    std::string input = key + magic;
+
+    // Compute SHA-1 hash
+    unsigned char hash[SHA_DIGEST_LENGTH];
+    SHA1(reinterpret_cast<const unsigned char*>(input.c_str()), input.length(), hash);
+
+    // Base64 encode
+    BIO *bio, *b64;
+    BUF_MEM *buffer_ptr;
+
+    b64 = BIO_new(BIO_f_base64());
+    bio = BIO_new(BIO_s_mem());
+    bio = BIO_push(b64, bio);
+
+    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
+    BIO_write(bio, hash, SHA_DIGEST_LENGTH);
+    BIO_flush(bio);
+    BIO_get_mem_ptr(bio, &buffer_ptr);
+
+    std::string result(buffer_ptr->data, buffer_ptr->length);
+    BIO_free_all(bio);
+
+    return result;
+}
+
+bool HttpServer::handle_websocket_upgrade(int client_socket, const HttpRequest& req) {
+    std::cout << "=== WebSocket Upgrade Request ===" << std::endl;
+    std::cout << "Path: " << req.path << std::endl;
+
+    if (!websocket_server_) {
+        std::cerr << "WebSocket server not available" << std::endl;
+        return false;
+    }
+
+    // Extract room_id from path (e.g., /room/123/host or /room/123/viewer)
+    std::string room_id;
+    bool is_host = false;
+
+    // Parse path: /room/:room_id/:role
+    size_t room_pos = req.path.find("/room/");
+    if (room_pos != std::string::npos) {
+        size_t id_start = room_pos + 6;  // length of "/room/"
+        size_t id_end = req.path.find("/", id_start);
+
+        if (id_end != std::string::npos) {
+            room_id = req.path.substr(id_start, id_end - id_start);
+            std::string role = req.path.substr(id_end + 1);
+
+            if (role == "host") {
+                is_host = true;
+            } else if (role == "viewer") {
+                is_host = false;
+            } else {
+                std::cerr << "Invalid role: " << role << std::endl;
+                return false;
+            }
+        }
+    }
+
+    if (room_id.empty()) {
+        std::cerr << "Could not extract room_id from path: " << req.path << std::endl;
+        return false;
+    }
+
+    std::cout << "Room ID: " << room_id << ", Role: " << (is_host ? "host" : "viewer") << std::endl;
+
+    // Get Sec-WebSocket-Key
+    auto key_it = req.headers.find("Sec-WebSocket-Key");
+    if (key_it == req.headers.end()) {
+        std::cerr << "Missing Sec-WebSocket-Key header" << std::endl;
+        return false;
+    }
+
+    std::string accept_key = compute_websocket_accept(key_it->second);
+
+    // Send WebSocket handshake response
+    std::ostringstream response;
+    response << "HTTP/1.1 101 Switching Protocols\r\n";
+    response << "Upgrade: websocket\r\n";
+    response << "Connection: Upgrade\r\n";
+    response << "Sec-WebSocket-Accept: " << accept_key << "\r\n";
+    response << "\r\n";
+
+    std::string response_str = response.str();
+    ssize_t bytes_written = write(client_socket, response_str.c_str(), response_str.length());
+
+    if (bytes_written < 0) {
+        std::cerr << "Failed to send WebSocket handshake response" << std::endl;
+        return false;
+    }
+
+    std::cout << "WebSocket handshake complete, transferring to WebSocket server" << std::endl;
+
+    // Generate peer_id
+    std::string peer_id = room_id + "_" + (is_host ? "host" : "viewer") + "_" +
+                          std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+
+    // Transfer the socket to the WebSocket server
+    websocket_server_->accept_upgraded_connection(client_socket, room_id, peer_id, is_host);
+
+    return true;
 }
 
 } // namespace onlylang

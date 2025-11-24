@@ -11,6 +11,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/media_server.dir/src/streaming_server.cpp.o.d"
   "CMakeFiles/media_server.dir/src/webrtc_handler.cpp.o"
   "CMakeFiles/media_server.dir/src/webrtc_handler.cpp.o.d"
+  "CMakeFiles/media_server.dir/src/websocket_server.cpp.o"
+  "CMakeFiles/media_server.dir/src/websocket_server.cpp.o.d"
   "media_server"
   "media_server.pdb"
 )

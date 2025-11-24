@@ -1,7 +1,9 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
+import uuid
 
 
 class User(Base):
@@ -117,3 +119,46 @@ class Like(Base):
     # Relationships
     user = relationship("User")
     post = relationship("Post", back_populates="likes")
+
+
+class AnonymousLocation(Base):
+    __tablename__ = "anonymous_locations"
+
+    location_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
+class Livestream(Base):
+    __tablename__ = "livestreams"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    room_id = Column(String(255), unique=True, index=True, nullable=False)
+    post_id = Column(String(255), nullable=True)  # Optional link to a post
+
+    # Stream timing
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Stream status: 'active', 'ended', 'error'
+    status = Column(String(20), default='active', nullable=False, index=True)
+
+    # Viewer statistics
+    max_viewers = Column(Integer, default=0, nullable=False)
+    total_viewers = Column(Integer, default=0, nullable=False)  # Unique viewers
+
+    # Stream metadata
+    title = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Relationships
+    user = relationship("User")
+
+    @property
+    def duration_seconds(self):
+        """Calculate stream duration in seconds"""
+        if self.ended_at:
+            return int((self.ended_at - self.started_at).total_seconds())
+        return None

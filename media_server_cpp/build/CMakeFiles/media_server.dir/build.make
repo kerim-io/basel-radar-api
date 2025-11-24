@@ -142,10 +142,24 @@ CMakeFiles/media_server.dir/src/http_server.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/media_server.dir/src/http_server.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/http_server.cpp -o CMakeFiles/media_server.dir/src/http_server.cpp.s
 
+CMakeFiles/media_server.dir/src/websocket_server.cpp.o: CMakeFiles/media_server.dir/flags.make
+CMakeFiles/media_server.dir/src/websocket_server.cpp.o: /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/websocket_server.cpp
+CMakeFiles/media_server.dir/src/websocket_server.cpp.o: CMakeFiles/media_server.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/media_server.dir/src/websocket_server.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/media_server.dir/src/websocket_server.cpp.o -MF CMakeFiles/media_server.dir/src/websocket_server.cpp.o.d -o CMakeFiles/media_server.dir/src/websocket_server.cpp.o -c /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/websocket_server.cpp
+
+CMakeFiles/media_server.dir/src/websocket_server.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/media_server.dir/src/websocket_server.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/websocket_server.cpp > CMakeFiles/media_server.dir/src/websocket_server.cpp.i
+
+CMakeFiles/media_server.dir/src/websocket_server.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/media_server.dir/src/websocket_server.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/websocket_server.cpp -o CMakeFiles/media_server.dir/src/websocket_server.cpp.s
+
 CMakeFiles/media_server.dir/src/config.cpp.o: CMakeFiles/media_server.dir/flags.make
 CMakeFiles/media_server.dir/src/config.cpp.o: /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/config.cpp
 CMakeFiles/media_server.dir/src/config.cpp.o: CMakeFiles/media_server.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/media_server.dir/src/config.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object CMakeFiles/media_server.dir/src/config.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/media_server.dir/src/config.cpp.o -MF CMakeFiles/media_server.dir/src/config.cpp.o.d -o CMakeFiles/media_server.dir/src/config.cpp.o -c /Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/config.cpp
 
 CMakeFiles/media_server.dir/src/config.cpp.i: cmake_force
@@ -163,6 +177,7 @@ media_server_OBJECTS = \
 "CMakeFiles/media_server.dir/src/webrtc_handler.cpp.o" \
 "CMakeFiles/media_server.dir/src/room_manager.cpp.o" \
 "CMakeFiles/media_server.dir/src/http_server.cpp.o" \
+"CMakeFiles/media_server.dir/src/websocket_server.cpp.o" \
 "CMakeFiles/media_server.dir/src/config.cpp.o"
 
 # External object files for target media_server
@@ -173,12 +188,15 @@ media_server: CMakeFiles/media_server.dir/src/streaming_server.cpp.o
 media_server: CMakeFiles/media_server.dir/src/webrtc_handler.cpp.o
 media_server: CMakeFiles/media_server.dir/src/room_manager.cpp.o
 media_server: CMakeFiles/media_server.dir/src/http_server.cpp.o
+media_server: CMakeFiles/media_server.dir/src/websocket_server.cpp.o
 media_server: CMakeFiles/media_server.dir/src/config.cpp.o
 media_server: CMakeFiles/media_server.dir/build.make
 media_server: /opt/homebrew/lib/libboost_system.dylib
 media_server: /opt/homebrew/lib/libboost_thread.dylib
+media_server: /opt/homebrew/Cellar/openssl@3/3.5.1/lib/libssl.dylib
+media_server: /opt/homebrew/Cellar/openssl@3/3.5.1/lib/libcrypto.dylib
 media_server: CMakeFiles/media_server.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CXX executable media_server"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Linking CXX executable media_server"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/media_server.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

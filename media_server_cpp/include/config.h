@@ -15,6 +15,7 @@ struct IceServer {
 struct ServerConfig {
     std::string host = "0.0.0.0";
     int port = 8080;
+    int websocket_port = 9002;
     int max_connections = 1000;
 };
 

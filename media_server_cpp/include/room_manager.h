@@ -28,7 +28,7 @@ struct Participant {
 
 struct Room {
     std::string room_id;
-    std::string post_id;  // Changed from classroom_id to post_id
+    std::string post_id;
     std::string host_user_id;
     bool is_active;
     std::chrono::steady_clock::time_point created_at;

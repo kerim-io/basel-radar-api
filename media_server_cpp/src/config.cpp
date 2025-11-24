@@ -22,6 +22,7 @@ bool Config::load(const std::string& filename) {
         if (j.contains("server")) {
             server.host = j["server"].value("host", "0.0.0.0");
             server.port = j["server"].value("port", 8080);
+            server.websocket_port = j["server"].value("websocket_port", 9002);
             server.max_connections = j["server"].value("max_connections", 1000);
         }
 

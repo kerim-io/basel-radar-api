@@ -14,6 +14,7 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/room_manager.cpp" "CMakeFiles/media_server.dir/src/room_manager.cpp.o" "gcc" "CMakeFiles/media_server.dir/src/room_manager.cpp.o.d"
   "/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/streaming_server.cpp" "CMakeFiles/media_server.dir/src/streaming_server.cpp.o" "gcc" "CMakeFiles/media_server.dir/src/streaming_server.cpp.o.d"
   "/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/webrtc_handler.cpp" "CMakeFiles/media_server.dir/src/webrtc_handler.cpp.o" "gcc" "CMakeFiles/media_server.dir/src/webrtc_handler.cpp.o.d"
+  "/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/src/websocket_server.cpp" "CMakeFiles/media_server.dir/src/websocket_server.cpp.o" "gcc" "CMakeFiles/media_server.dir/src/websocket_server.cpp.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

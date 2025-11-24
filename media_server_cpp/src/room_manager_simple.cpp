@@ -4,7 +4,7 @@
 namespace onlylang {
 
 bool RoomManager::create_room(const std::string& room_id,
-                              const std::string& classroom_id,
+                              const std::string& post_id,
                               const std::string& host_user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     // Check if room already exists
@@ -14,7 +14,7 @@ bool RoomManager::create_room(const std::string& room_id,
 
     Room room;
     room.room_id = room_id;
-    room.classroom_id = classroom_id;
+    room.post_id = post_id;
     room.host_user_id = host_user_id;
     room.is_active = true;
     room.created_at = std::chrono::steady_clock::now();

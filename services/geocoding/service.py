@@ -1,6 +1,8 @@
 """Geocoding service using Google Maps API"""
 
 import os
+import ssl
+import certifi
 
 from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 from geopy.geocoders import GoogleV3
@@ -33,7 +35,10 @@ class GeocodingService:
                 "Google Maps API key required. Set GOOGLE_MAPS_API_KEY "
                 "environment variable or pass google_api_key parameter"
             )
-        self.geocoder = GoogleV3(api_key=api_key, timeout=timeout)
+
+        # Create SSL context with certifi certificates to avoid certificate verification errors
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        self.geocoder = GoogleV3(api_key=api_key, timeout=timeout, ssl_context=ctx)
         self.provider = "google"
 
     def geocode(self, address: str, exactly_one: bool = True) -> LocationResult | None:

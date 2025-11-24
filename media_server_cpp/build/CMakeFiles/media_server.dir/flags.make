@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = -DBOOST_SYSTEM_DYN_LINK -DBOOST_SYSTEM_NO_LIB -DBOOST_THREAD_DYN_LINK -DBOOST_THREAD_NO_LIB
 
-CXX_INCLUDES = -I/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/include -I/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/third_party/webrtc/include -isystem /opt/homebrew/include
+CXX_INCLUDES = -I/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/include -I/Users/kerim/PycharmProjects/bit_basel_backend/media_server_cpp/third_party/webrtc/include -isystem /opt/homebrew/include -isystem /opt/homebrew/Cellar/openssl@3/3.5.1/include
 
 CXX_FLAGSarm64 = -std=gnu++17 -arch arm64 -Wall -Wextra -Wpedantic -O2
 

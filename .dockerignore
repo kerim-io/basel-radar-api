@@ -1,0 +1,105 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Test files
+test_*.py
+*_test.py
+tests/
+.pytest_cache/
+
+# Uploads (will be managed via volume)
+uploads/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.mov
+
+# Keys (handled via environment variables in Railway)
+keys/
+*.p8
+*.pem
+*.key
+
+# C++ build artifacts (not needed in Python container)
+media_server_cpp/
+*.cpp
+*.h
+*.hpp
+CMakeLists.txt
+*.o
+*.a
+
+# Logs
+*.log
+logs/
+
+# Database files (if any local SQLite for dev)
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Railway
+.railway/
+
+# Misc
+*.bak
+*.swp
+.coverage

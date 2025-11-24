@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Find required packages
 find_package(Threads REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
+find_package(OpenSSL REQUIRED)
 
 # WebRTC library (you'll need to build libwebrtc separately)
 # Download from: https://webrtc.googlesource.com/src
@@ -34,6 +35,7 @@ set(SOURCES
     src/webrtc_handler.cpp
     src/room_manager.cpp
     src/http_server.cpp
+    src/websocket_server.cpp
     src/config.cpp
 )
 
@@ -43,6 +45,7 @@ set(HEADERS
     include/webrtc_handler.h
     include/room_manager.h
     include/http_server.h
+    include/websocket_server.h
     include/config.h
 )
 
@@ -53,6 +56,8 @@ add_executable(media_server ${SOURCES} ${HEADERS})
 target_link_libraries(media_server
     ${CMAKE_THREAD_LIBS_INIT}
     ${Boost_LIBRARIES}
+    OpenSSL::SSL
+    OpenSSL::Crypto
     # WebRTC libraries (these names may vary based on your build)
     # webrtc
     # Comment: Full WebRTC linking is complex and depends on how you built it

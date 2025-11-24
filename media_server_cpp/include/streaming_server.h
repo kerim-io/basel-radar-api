@@ -12,10 +12,12 @@
 namespace onlylang {
 
 class HttpServer;
+class WebSocketServer;
 
 struct StreamingConfig {
     std::string host;
     int port;
+    int websocket_port;
     int max_rooms;
     int max_viewers_per_room;
 };
@@ -68,9 +70,12 @@ public:
     };
     ServerStats get_stats();
 
+    std::shared_ptr<WebSocketServer> get_websocket_server() { return websocket_server_; }
+
 private:
     std::shared_ptr<RoomManager> room_manager_;
     std::shared_ptr<HttpServer> http_server_;
+    std::shared_ptr<WebSocketServer> websocket_server_;
 
     std::map<std::string, PeerConnection> peers_;
     std::mutex peers_mutex_;

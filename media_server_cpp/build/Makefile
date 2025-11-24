@@ -318,6 +318,30 @@ src/webrtc_handler.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/media_server.dir/build.make CMakeFiles/media_server.dir/src/webrtc_handler.cpp.s
 .PHONY : src/webrtc_handler.cpp.s
 
+src/websocket_server.o: src/websocket_server.cpp.o
+.PHONY : src/websocket_server.o
+
+# target to build an object file
+src/websocket_server.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/media_server.dir/build.make CMakeFiles/media_server.dir/src/websocket_server.cpp.o
+.PHONY : src/websocket_server.cpp.o
+
+src/websocket_server.i: src/websocket_server.cpp.i
+.PHONY : src/websocket_server.i
+
+# target to preprocess a source file
+src/websocket_server.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/media_server.dir/build.make CMakeFiles/media_server.dir/src/websocket_server.cpp.i
+.PHONY : src/websocket_server.cpp.i
+
+src/websocket_server.s: src/websocket_server.cpp.s
+.PHONY : src/websocket_server.s
+
+# target to generate assembly for a file
+src/websocket_server.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/media_server.dir/build.make CMakeFiles/media_server.dir/src/websocket_server.cpp.s
+.PHONY : src/websocket_server.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -349,6 +373,9 @@ help:
 	@echo "... src/webrtc_handler.o"
 	@echo "... src/webrtc_handler.i"
 	@echo "... src/webrtc_handler.s"
+	@echo "... src/websocket_server.o"
+	@echo "... src/websocket_server.i"
+	@echo "... src/websocket_server.s"
 .PHONY : help
 
 

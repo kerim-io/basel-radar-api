@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 from db.database import create_async_session
-from db.models import Post, User
+from db.models import Post, User, Livestream
 from services.auth_service import decode_token
 
 router = APIRouter(tags=["websocket"])
@@ -44,6 +44,35 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+async def broadcast_location_update(location_id: str, latitude: float, longitude: float, area_name: str | None = None):
+    """
+    Broadcast anonymous location update to all connected clients
+
+    Called when a user updates their location to notify map viewers in real-time.
+    """
+    await manager.broadcast({
+        "type": "location_update",
+        "location_id": location_id,
+        "latitude": latitude,
+        "longitude": longitude,
+        "area_name": area_name,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+
+
+async def broadcast_location_expired(location_id: str):
+    """
+    Broadcast that a location has expired (15 min timeout)
+
+    Tells clients to remove the marker from the map.
+    """
+    await manager.broadcast({
+        "type": "location_expired",
+        "location_id": location_id,
+        "timestamp": datetime.utcnow().isoformat()
+    })
 
 
 @router.websocket("/ws/feed")
@@ -92,7 +121,9 @@ async def websocket_feed(websocket: WebSocket, token: str = Query(...)):
                 "media_url": post.media_url,
                 "media_type": post.media_type,
                 "latitude": post.latitude,
-                "longitude": post.longitude
+                "longitude": post.longitude,
+                "likes_count": 0,
+                "is_liked_by_current_user": False
             }
             for post, user in posts_data
         ]
@@ -141,7 +172,9 @@ async def websocket_feed(websocket: WebSocket, token: str = Query(...)):
                             "media_url": new_post.media_url,
                             "media_type": new_post.media_type,
                             "latitude": new_post.latitude,
-                            "longitude": new_post.longitude
+                            "longitude": new_post.longitude,
+                            "likes_count": 0,
+                            "is_liked_by_current_user": False
                         }
                     }
                     await manager.broadcast(post_data)
@@ -156,4 +189,74 @@ async def websocket_feed(websocket: WebSocket, token: str = Query(...)):
         await websocket.close(code=1011, reason=str(e))
     finally:
         if db:
+            await db.close()
+
+
+@router.websocket("/ws/livestream/{room_id}")
+async def livestream_tracking_websocket(websocket: WebSocket, room_id: str):
+    """
+    WebSocket endpoint to track livestream connection status.
+    When the connection drops, automatically end the livestream in the database.
+    """
+    await websocket.accept()
+
+    db = create_async_session()
+    try:
+        # Send confirmation
+        await websocket.send_json({"type": "connected", "room_id": room_id})
+
+        # Keep connection alive and wait for disconnect
+        while True:
+            try:
+                # Receive heartbeat or status messages
+                data = await websocket.receive_text()
+                message = json.loads(data)
+
+                # Handle viewer count updates
+                if message.get("type") == "viewer_update":
+                    viewer_count = message.get("count", 0)
+
+                    result = await db.execute(
+                        select(Livestream).where(
+                            Livestream.room_id == room_id,
+                            Livestream.status == 'active'
+                        )
+                    )
+                    livestream = result.scalar_one_or_none()
+
+                    if livestream:
+                        if viewer_count > livestream.max_viewers:
+                            livestream.max_viewers = viewer_count
+                        await db.commit()
+
+            except WebSocketDisconnect:
+                break
+            except json.JSONDecodeError:
+                continue
+
+    except Exception as e:
+        print(f"WebSocket error for room {room_id}: {e}")
+
+    finally:
+        # Connection dropped - end the livestream
+        try:
+            result = await db.execute(
+                select(Livestream).where(
+                    Livestream.room_id == room_id,
+                    Livestream.status == 'active'
+                )
+            )
+            livestream = result.scalar_one_or_none()
+
+            if livestream:
+                livestream.ended_at = datetime.utcnow()
+                livestream.status = 'ended'
+                await db.commit()
+
+                duration = livestream.duration_seconds
+                print(f"🔌 WebSocket disconnected - Livestream ended: room={room_id}, duration={duration}s")
+
+        except Exception as e:
+            print(f"Error ending livestream on disconnect: {e}")
+        finally:
             await db.close()

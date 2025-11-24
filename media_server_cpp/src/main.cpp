@@ -45,6 +45,7 @@ int main(int argc, char* argv[]) {
     StreamingConfig stream_config;
     stream_config.host = config.server.host;
     stream_config.port = config.server.port;
+    stream_config.websocket_port = config.server.websocket_port;
     stream_config.max_rooms = config.rooms.max_rooms;
     stream_config.max_viewers_per_room = config.rooms.max_viewers_per_room;
 
@@ -66,11 +67,15 @@ int main(int argc, char* argv[]) {
     std::cout << "Max viewers per room: " << config.rooms.max_viewers_per_room << std::endl;
     std::cout << std::endl;
     std::cout << "HTTP API endpoints:" << std::endl;
-    std::cout << "  POST /room/create                - Create a new room" << std::endl;
+    std::cout << "  POST /room/create                 - Create a new room" << std::endl;
     std::cout << "  POST /room/:room_id/stop          - Stop a room" << std::endl;
     std::cout << "  GET  /room/:room_id/stats         - Get room statistics" << std::endl;
     std::cout << "  GET  /stats                       - Get server statistics" << std::endl;
     std::cout << "  GET  /health                      - Health check" << std::endl;
+    std::cout << std::endl;
+    std::cout << "WebSocket endpoints:" << std::endl;
+    std::cout << "  ws://" << config.server.host << ":" << config.server.port << "/room/:room_id/host   - Host stream" << std::endl;
+    std::cout << "  ws://" << config.server.host << ":" << config.server.port << "/room/:room_id/viewer - View stream" << std::endl;
     std::cout << std::endl;
     std::cout << "Press Ctrl+C to shutdown" << std::endl;
     std::cout << "========================================" << std::endl;
