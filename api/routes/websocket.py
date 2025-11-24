@@ -154,6 +154,9 @@ async def websocket_feed(websocket: WebSocket, token: str = Query(...)):
         while True:
             try:
                 data = await websocket.receive_json()
+            except WebSocketDisconnect:
+                # Client disconnected normally - propagate to outer handler
+                raise
             except json.JSONDecodeError as e:
                 logger.warning("Invalid JSON received in WebSocket", extra={"user_id": user_id, "error": str(e)})
                 await websocket.send_json({
