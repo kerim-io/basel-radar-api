@@ -8,16 +8,19 @@ from pathlib import Path
 import uuid
 import os
 import hashlib
+import logging
 from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, Post, Like, CheckIn, RefreshToken, AnonymousLocation
+from db.models import User, Follow, Post, Like, CheckIn, RefreshToken, AnonymousLocation, Livestream
 from api.dependencies import get_current_user
 from core.config import settings
 from api.routes.websocket import broadcast_location_update
+from services.geofence import haversine_distance
 
 router = APIRouter(prefix="/users", tags=["users"])
+logger = logging.getLogger(__name__)
 
 
 class ProfileUpdate(BaseModel):
@@ -198,9 +201,17 @@ async def upload_profile_picture(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Invalid file type. Only JPEG, PNG, WEBP allowed")
 
+    # Read and validate file size
+    content = await file.read()
+    if len(content) > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE} bytes"
+        )
+
     # Generate unique filename
-    ext = file.filename.split(".")[-1]
-    filename = f"profile_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}"
+    ext = Path(file.filename).suffix if file.filename else ".jpg"
+    filename = f"profile_{current_user.id}_{uuid.uuid4().hex[:8]}{ext}"
 
     # Save to uploads directory
     upload_dir = Path(settings.UPLOAD_DIR) / "profile_pictures"
@@ -208,7 +219,6 @@ async def upload_profile_picture(
     file_path = upload_dir / filename
 
     async with aiofiles.open(file_path, "wb") as f:
-        content = await file.read()
         await f.write(content)
 
     # Update user profile picture URL
@@ -361,21 +371,7 @@ async def get_user_profile(
     )
 
 
-def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    Calculate the great circle distance in kilometers between two points
-    on the earth (specified in decimal degrees)
-    """
-    # Convert decimal degrees to radians
-    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-
-    # Haversine formula
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-    c = 2 * asin(sqrt(a))
-    r = 6371  # Radius of earth in kilometers
-    return c * r
+# Removed duplicate haversine_distance function - now imported from services.geofence
 
 
 @router.post("/me/location", response_model=LocationResponse)
@@ -471,18 +467,23 @@ async def delete_account(
     1. Deletes all user likes
     2. Deletes all user posts (and associated likes on those posts)
     3. Deletes all check-ins
-    4. Deletes all follows (as follower and following)
-    5. Deletes all refresh tokens
-    6. Deletes profile picture file from disk
-    7. Deletes user account
+    4. Deletes all livestreams
+    5. Deletes all follows (as follower and following)
+    6. Deletes all refresh tokens
+    7. Deletes profile picture file from disk
+    8. Deletes user account
 
     All operations are performed in a transaction with rollback on failure.
     """
+    # Capture user_id for error logging before any operations
+    user_id = current_user.id
+
     try:
         deleted_counts = {
             "likes": 0,
             "posts": 0,
             "check_ins": 0,
+            "livestreams": 0,
             "follows": 0,
             "refresh_tokens": 0,
             "files": 0
@@ -516,7 +517,7 @@ async def delete_account(
                         os.remove(media_path)
                         deleted_counts["files"] += 1
                     except Exception as e:
-                        print(f"Warning: Failed to delete media file {media_path}: {e}")
+                        logger.warning("Failed to delete media file", extra={"media_path": str(media_path), "error": str(e)})
 
         # Delete user's posts
         if post_ids:
@@ -531,7 +532,13 @@ async def delete_account(
         )
         deleted_counts["check_ins"] = result.rowcount
 
-        # 4. Delete follows (as follower)
+        # 4. Delete livestreams
+        result = await db.execute(
+            delete(Livestream).where(Livestream.user_id == current_user.id)
+        )
+        deleted_counts["livestreams"] = result.rowcount
+
+        # 5. Delete follows (as follower)
         result = await db.execute(
             delete(Follow).where(Follow.follower_id == current_user.id)
         )
@@ -544,13 +551,13 @@ async def delete_account(
         follow_count += result.rowcount
         deleted_counts["follows"] = follow_count
 
-        # 5. Delete refresh tokens
+        # 6. Delete refresh tokens
         result = await db.execute(
             delete(RefreshToken).where(RefreshToken.user_id == current_user.id)
         )
         deleted_counts["refresh_tokens"] = result.rowcount
 
-        # 6. Delete profile picture file
+        # 7. Delete profile picture file
         if current_user.profile_picture:
             profile_pic_path = Path(settings.UPLOAD_DIR) / current_user.profile_picture.lstrip("/files/")
             if profile_pic_path.exists():
@@ -558,13 +565,18 @@ async def delete_account(
                     os.remove(profile_pic_path)
                     deleted_counts["files"] += 1
                 except Exception as e:
-                    print(f"Warning: Failed to delete profile picture {profile_pic_path}: {e}")
+                    logger.warning("Failed to delete profile picture", extra={"profile_pic_path": str(profile_pic_path), "error": str(e)})
 
-        # 7. Delete user account
+        # 8. Delete user account
         await db.delete(current_user)
 
         # Commit all changes
         await db.commit()
+
+        logger.info(
+            "Account deleted successfully",
+            extra={"user_id": user_id, "deleted_counts": deleted_counts}
+        )
 
         return DeleteAccountResponse(
             success=True,
@@ -575,7 +587,7 @@ async def delete_account(
     except Exception as e:
         # Rollback on any error
         await db.rollback()
-        print(f"Error deleting account: {str(e)}")
+        logger.error("Error deleting account", exc_info=True, extra={"user_id": user_id, "error": str(e)})
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete account: {str(e)}"

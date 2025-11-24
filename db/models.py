@@ -43,10 +43,11 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    posts = relationship("Post", back_populates="user")
-    check_ins = relationship("CheckIn", back_populates="user")
-    followers = relationship("Follow", foreign_keys="Follow.following_id", back_populates="following")
-    following = relationship("Follow", foreign_keys="Follow.follower_id", back_populates="follower")
+    posts = relationship("Post", back_populates="user", cascade="all, delete-orphan")
+    check_ins = relationship("CheckIn", back_populates="user", cascade="all, delete-orphan")
+    livestreams = relationship("Livestream", back_populates="user", cascade="all, delete-orphan")
+    followers = relationship("Follow", foreign_keys="Follow.following_id", back_populates="following", cascade="all, delete-orphan")
+    following = relationship("Follow", foreign_keys="Follow.follower_id", back_populates="follower", cascade="all, delete-orphan")
 
     @property
     def has_profile(self) -> bool:
@@ -58,8 +59,8 @@ class Follow(Base):
     __tablename__ = "follows"
 
     id = Column(Integer, primary_key=True, index=True)
-    follower_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    following_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    following_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
@@ -71,7 +72,7 @@ class Post(Base):
     __tablename__ = "posts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
     media_url = Column(String, nullable=True)
     media_type = Column(String(10), nullable=True)  # 'image', 'video', None for text
@@ -88,7 +89,7 @@ class CheckIn(Base):
     __tablename__ = "check_ins"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     location_name = Column(String(255), nullable=True)
@@ -102,7 +103,7 @@ class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     token = Column(String(500), nullable=False, unique=True, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -112,12 +113,12 @@ class Like(Base):
     __tablename__ = "likes"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    post_id = Column(Integer, ForeignKey("posts.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    user = relationship("User")
+    user = relationship("User", backref="user_likes")
     post = relationship("Post", back_populates="likes")
 
 
@@ -134,7 +135,7 @@ class Livestream(Base):
     __tablename__ = "livestreams"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     room_id = Column(String(255), unique=True, index=True, nullable=False)
     post_id = Column(String(255), nullable=True)  # Optional link to a post
 
@@ -154,7 +155,7 @@ class Livestream(Base):
     description = Column(Text, nullable=True)
 
     # Relationships
-    user = relationship("User")
+    user = relationship("User", back_populates="livestreams")
 
     @property
     def duration_seconds(self):
