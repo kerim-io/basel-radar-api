@@ -7,6 +7,7 @@ from datetime import datetime
 import uuid
 from pathlib import Path
 import aiofiles
+import logging
 
 from db.database import get_async_session
 from db.models import Post, User, Like
@@ -14,6 +15,7 @@ from api.dependencies import get_current_user
 from core.config import settings
 
 router = APIRouter(prefix="/posts", tags=["posts"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/upload")
@@ -98,6 +100,16 @@ async def upload_image(
     # Return URL
     file_url = f"/files/{unique_filename}"
 
+    logger.info(
+        "Image uploaded successfully",
+        extra={
+            "user_id": current_user.id,
+            "filename": unique_filename,
+            "size_bytes": len(contents),
+            "mime_type": file.content_type
+        }
+    )
+
     return {
         "url": file_url,
         "filename": unique_filename
@@ -141,17 +153,19 @@ async def create_post(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
-    """Create a new post (text only for MVP)"""
+    """Create a new post with text and/or media"""
     # Validate content
     content = post_data.content.strip()
-    if not content:
+
+    # Allow empty content if media is present
+    if not content and not post_data.media_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Post content cannot be empty"
+            detail="Post must have content or media"
         )
 
     # Validate content length (max 2000 chars)
-    if len(content) > 2000:
+    if content and len(content) > 2000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Post content exceeds maximum length of 2000 characters"
@@ -182,6 +196,18 @@ async def create_post(
         db.add(post)
         await db.commit()
         await db.refresh(post)
+
+        logger.info(
+            "Post created successfully",
+            extra={
+                "user_id": current_user.id,
+                "post_id": post.id,
+                "has_media": bool(post.media_url),
+                "media_type": post.media_type,
+                "has_location": bool(post.latitude and post.longitude),
+                "content_length": len(content) if content else 0
+            }
+        )
 
         return PostResponse(
             id=post.id,
