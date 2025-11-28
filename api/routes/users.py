@@ -18,9 +18,26 @@ from api.dependencies import get_current_user
 from core.config import settings
 from api.routes.websocket import broadcast_location_update
 from services.geofence import haversine_distance
+import re
 
 router = APIRouter(prefix="/users", tags=["users"])
 logger = logging.getLogger(__name__)
+
+
+def sanitize_nickname(nickname: str) -> str:
+    """
+    Sanitize nickname to only allow letters, numbers, and underscores.
+    Spaces become underscores, other characters are removed.
+    """
+    # Replace spaces with underscores
+    nickname = nickname.replace(" ", "_")
+    # Remove any character that isn't alphanumeric or underscore
+    nickname = re.sub(r'[^a-zA-Z0-9_]', '', nickname)
+    # Remove consecutive underscores
+    nickname = re.sub(r'_+', '_', nickname)
+    # Strip leading/trailing underscores
+    nickname = nickname.strip('_')
+    return nickname.lower()
 
 
 class ProfileUpdate(BaseModel):
@@ -55,6 +72,14 @@ class ProfileResponse(BaseModel):
     # Privacy flags (only shown to owner)
     phone_visible: Optional[bool] = None
     email_visible: Optional[bool] = None
+    # Social handles
+    instagram_handle: Optional[str] = None
+    instagram_profile_pic: Optional[str] = None
+    linkedin_handle: Optional[str] = None
+    # Stats
+    posts_count: int = 0
+    followers_count: int = 0
+    following_count: int = 0
 
     class Config:
         from_attributes = True
@@ -127,8 +152,9 @@ class DeleteAccountResponse(BaseModel):
 
 
 class QRTokenResponse(BaseModel):
-    """Response containing user's QR token"""
+    """Response containing user's QR code deep link URL"""
     qr_token: str
+    qr_url: str  # Full deep link URL for QR code generation
 
 
 class QRConnectRequest(BaseModel):
@@ -150,8 +176,31 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
 
 
 @router.get("/me/profile", response_model=ProfileResponse)
-async def get_profile(current_user: User = Depends(get_current_user)):
-    """Get current user full profile"""
+async def get_profile(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Get current user full profile with stats"""
+    from sqlalchemy import func
+
+    # Get posts count
+    posts_result = await db.execute(
+        select(func.count(Post.id)).where(Post.user_id == current_user.id)
+    )
+    posts_count = posts_result.scalar() or 0
+
+    # Get followers count (users following this user)
+    followers_result = await db.execute(
+        select(func.count(Follow.id)).where(Follow.following_id == current_user.id)
+    )
+    followers_count = followers_result.scalar() or 0
+
+    # Get following count (users this user follows)
+    following_result = await db.execute(
+        select(func.count(Follow.id)).where(Follow.follower_id == current_user.id)
+    )
+    following_count = following_result.scalar() or 0
+
     return ProfileResponse(
         id=current_user.id,
         first_name=current_user.first_name,
@@ -161,7 +210,13 @@ async def get_profile(current_user: User = Depends(get_current_user)):
         phone=current_user.phone,
         email=current_user.email,
         profile_picture=current_user.profile_picture,
-        has_profile=current_user.has_profile
+        has_profile=current_user.has_profile,
+        instagram_handle=current_user.instagram_handle,
+        instagram_profile_pic=current_user.instagram_profile_pic,
+        linkedin_handle=current_user.linkedin_handle,
+        posts_count=posts_count,
+        followers_count=followers_count,
+        following_count=following_count
     )
 
 
@@ -177,7 +232,10 @@ async def update_profile_full(
     if profile_data.last_name is not None:
         current_user.last_name = profile_data.last_name
     if profile_data.nickname is not None:
-        current_user.nickname = profile_data.nickname
+        sanitized = sanitize_nickname(profile_data.nickname)
+        if not sanitized:
+            raise HTTPException(status_code=400, detail="Nickname must contain at least one letter or number")
+        current_user.nickname = sanitized
     if profile_data.employer is not None:
         current_user.employer = profile_data.employer
     if profile_data.phone is not None:
@@ -207,8 +265,310 @@ async def update_profile_full(
         profile_picture=current_user.profile_picture,
         has_profile=current_user.has_profile,
         phone_visible=current_user.phone_visible,
-        email_visible=current_user.email_visible
+        email_visible=current_user.email_visible,
+        instagram_handle=current_user.instagram_handle,
+        instagram_profile_pic=current_user.instagram_profile_pic,
+        linkedin_handle=current_user.linkedin_handle
     )
+
+
+class InstagramHandleUpdate(BaseModel):
+    instagram_handle: Optional[str] = None
+
+
+@router.put("/me/instagram")
+async def update_instagram_handle(
+    data: InstagramHandleUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Update current user's Instagram handle and fetch their profile pic"""
+    import httpx
+    import json
+
+    handle = data.instagram_handle
+
+    # Clean handle - remove @ if present
+    if handle:
+        handle = handle.lstrip("@").strip()
+        if len(handle) > 30:
+            raise HTTPException(status_code=400, detail="Instagram handle too long")
+
+    current_user.instagram_handle = handle if handle else None
+    current_user.instagram_profile_pic = None  # Reset pic
+
+    # Fetch profile pic if handle provided
+    if handle:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Accept": "*/*",
+            "X-IG-App-ID": "936619743392459",
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://www.instagram.com/api/v1/users/web_profile_info/?username={handle}",
+                    headers=headers,
+                    timeout=10.0
+                )
+
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        user_data = data.get("data", {}).get("user", {})
+                        pic_url = user_data.get("profile_pic_url_hd") or user_data.get("profile_pic_url")
+                        if pic_url:
+                            current_user.instagram_profile_pic = pic_url
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+                # Fallback to scraping
+                if not current_user.instagram_profile_pic:
+                    response = await client.get(
+                        f"https://www.instagram.com/{handle}/",
+                        headers={"User-Agent": headers["User-Agent"], "Accept": "text/html"},
+                        follow_redirects=True,
+                        timeout=10.0
+                    )
+                    if response.status_code == 200:
+                        import re
+                        match = re.search(r'"profile_pic_url_hd":"([^"]+)"', response.text)
+                        if match:
+                            current_user.instagram_profile_pic = match.group(1).replace("\\u0026", "&").replace("\\/", "/")
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch Instagram profile pic for {handle}: {e}")
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "instagram_handle": current_user.instagram_handle,
+        "instagram_profile_pic": current_user.instagram_profile_pic
+    }
+
+
+class InstagramLookupRequest(BaseModel):
+    handle: str
+
+
+class LinkedInHandleUpdate(BaseModel):
+    linkedin_handle: Optional[str] = None
+
+
+@router.put("/me/linkedin")
+async def update_linkedin_handle(
+    data: LinkedInHandleUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Update current user's LinkedIn handle (username from profile URL)"""
+    handle = data.linkedin_handle
+
+    # Clean handle - extract username if full URL provided
+    if handle:
+        handle = handle.strip()
+        # Handle full URLs like linkedin.com/in/username
+        if "linkedin.com/in/" in handle:
+            handle = handle.split("linkedin.com/in/")[-1].strip("/").split("?")[0]
+        if len(handle) > 100:
+            raise HTTPException(status_code=400, detail="LinkedIn handle too long")
+
+    current_user.linkedin_handle = handle if handle else None
+    await db.commit()
+
+    return {"success": True, "linkedin_handle": current_user.linkedin_handle}
+
+
+class LinkedInLookupRequest(BaseModel):
+    handle: str
+
+
+@router.post("/linkedin/lookup")
+async def lookup_linkedin_profile(
+    request: LinkedInLookupRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fetch LinkedIn profile pic URL for a given handle.
+
+    Note: LinkedIn is very restrictive about scraping. This may not always work.
+    """
+    import httpx
+
+    handle = request.handle.strip()
+    if not handle:
+        raise HTTPException(status_code=400, detail="Handle required")
+
+    # Clean handle - extract username if full URL provided
+    if "linkedin.com/in/" in handle:
+        handle = handle.split("linkedin.com/in/")[-1].strip("/").split("?")[0]
+
+    profile_pic_url = None
+    full_name = None
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://www.linkedin.com/in/{handle}/",
+                headers=headers,
+                follow_redirects=True,
+                timeout=10.0
+            )
+
+            if response.status_code == 200:
+                html = response.text
+                import re
+
+                # Try to find profile image in various formats
+                # LinkedIn often uses data-delayed-url or img tags with specific classes
+                patterns = [
+                    r'"profilePicture"[^}]*"displayImageUrl":"([^"]+)"',
+                    r'data-delayed-url="(https://media\.licdn\.com/[^"]+)"',
+                    r'<img[^>]*class="[^"]*profile-photo[^"]*"[^>]*src="([^"]+)"',
+                    r'<img[^>]*src="(https://media\.licdn\.com/dms/image/[^"]+)"',
+                    r'"picture":"(https://media\.licdn\.com/[^"]+)"',
+                ]
+
+                for pattern in patterns:
+                    match = re.search(pattern, html)
+                    if match:
+                        profile_pic_url = match.group(1).replace("\\u002F", "/").replace("\\/", "/")
+                        break
+
+                # Try to get full name
+                name_patterns = [
+                    r'<title>([^|<]+?)(?:\s*[-|]|\s*\|)',
+                    r'"firstName":"([^"]+)"[^}]*"lastName":"([^"]+)"',
+                    r'<h1[^>]*>([^<]+)</h1>',
+                ]
+
+                for pattern in name_patterns:
+                    match = re.search(pattern, html)
+                    if match:
+                        if match.lastindex == 2:
+                            full_name = f"{match.group(1)} {match.group(2)}"
+                        else:
+                            full_name = match.group(1).strip()
+                        break
+
+    except Exception as e:
+        logger.warning(f"LinkedIn lookup error for {handle}: {e}")
+
+    return {
+        "handle": handle,
+        "profile_url": f"https://www.linkedin.com/in/{handle}/",
+        "profile_pic_url": profile_pic_url,
+        "full_name": full_name,
+        "success": profile_pic_url is not None
+    }
+
+
+@router.post("/instagram/lookup")
+async def lookup_instagram_profile(
+    request: InstagramLookupRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fetch Instagram profile pic URL for a given handle.
+
+    Tries multiple methods:
+    1. Instagram's web API endpoint
+    2. Scraping the profile page HTML
+    """
+    import httpx
+    import json
+
+    handle = request.handle.lstrip("@").strip()
+    if not handle:
+        raise HTTPException(status_code=400, detail="Handle required")
+
+    profile_pic_url = None
+    full_name = None
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # Method 1: Try the web profile info endpoint
+            response = await client.get(
+                f"https://www.instagram.com/api/v1/users/web_profile_info/?username={handle}",
+                headers=headers,
+                timeout=10.0
+            )
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    user_data = data.get("data", {}).get("user", {})
+                    profile_pic_url = user_data.get("profile_pic_url_hd") or user_data.get("profile_pic_url")
+                    full_name = user_data.get("full_name")
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            # Method 2: Fallback to scraping profile page
+            if not profile_pic_url:
+                response = await client.get(
+                    f"https://www.instagram.com/{handle}/",
+                    headers={
+                        "User-Agent": headers["User-Agent"],
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                    follow_redirects=True,
+                    timeout=10.0
+                )
+
+                if response.status_code == 200:
+                    html = response.text
+
+                    # Try to find profile_pic_url_hd in JSON data
+                    import re
+                    match = re.search(r'"profile_pic_url_hd":"([^"]+)"', html)
+                    if match:
+                        profile_pic_url = match.group(1).replace("\\u0026", "&").replace("\\/", "/")
+                    else:
+                        # Try profile_pic_url
+                        match = re.search(r'"profile_pic_url":"([^"]+)"', html)
+                        if match:
+                            profile_pic_url = match.group(1).replace("\\u0026", "&").replace("\\/", "/")
+                        else:
+                            # Fallback: og:image meta tag
+                            match = re.search(r'property="og:image"\s+content="([^"]+)"', html)
+                            if match:
+                                profile_pic_url = match.group(1)
+
+                    # Try to get full name
+                    if not full_name:
+                        match = re.search(r'"full_name":"([^"]*)"', html)
+                        if match:
+                            full_name = match.group(1)
+
+    except Exception as e:
+        logger.warning(f"Instagram lookup error for {handle}: {e}")
+
+    return {
+        "handle": handle,
+        "profile_pic_url": profile_pic_url,
+        "full_name": full_name,
+        "success": profile_pic_url is not None
+    }
 
 
 @router.post("/me/profile-picture")
@@ -605,6 +965,8 @@ async def update_location(
         longitude=location.longitude
     )
 
+    # NOTE: Auto-checkin removed - client now calls GET /bounces/nearby and chooses
+
     if can_post:
         return LocationResponse(
             can_post=True,
@@ -781,7 +1143,10 @@ async def get_qr_token(
         await db.commit()
         await db.refresh(current_user)
 
-    return QRTokenResponse(qr_token=current_user.qr_token)
+    # Build full deep link URL for QR code
+    qr_url = f"{settings.QR_DEEP_LINK_SCHEME}{current_user.qr_token}"
+
+    return QRTokenResponse(qr_token=current_user.qr_token, qr_url=qr_url)
 
 
 @router.post("/qr-connect", response_model=QRConnectResponse)

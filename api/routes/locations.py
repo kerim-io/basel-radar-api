@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.dependencies import get_current_user, get_async_session
 from db.models import User, AnonymousLocation
 from services.geocoding import GeocodingService
-from services.activity_clustering import get_activity_clusters, ActivityCluster
 from core.config import settings
 
 router = APIRouter(prefix="/locations", tags=["locations"])
@@ -42,16 +41,6 @@ class AnonymousLocationResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class ActivityClusterResponse(BaseModel):
-    """A cluster of nearby post activity for map hotspots"""
-    cluster_id: str
-    latitude: float
-    longitude: float
-    count: int  # Number of unique users who posted here
-    venue_name: str | None = None
-    last_activity: datetime
 
 
 @router.get("/anonymous/active", response_model=List[AnonymousLocationResponse])
@@ -144,34 +133,6 @@ async def cleanup_expired_locations(
     }
 
 
-@router.get("/activity-clusters", response_model=List[ActivityClusterResponse])
-async def get_activity_clusters_endpoint(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_session)
-):
-    """
-    Get aggregated post activity clusters for the map.
-
-    Returns anonymized hotspots showing how many people are posting in each area.
-    Clusters posts within 100m radius, counts unique users (not posts).
-
-    **Privacy**: No usernames revealed - only counts and coordinates.
-
-    Response example:
-    - count=1: "1 person here"
-    - count=5: "5 people here"
-    - count=100+: "100+ people here"
-    """
-    clusters = await get_activity_clusters(db)
-
-    return [
-        ActivityClusterResponse(
-            cluster_id=c.cluster_id,
-            latitude=c.latitude,
-            longitude=c.longitude,
-            count=c.count,
-            venue_name=c.venue_name,
-            last_activity=c.last_activity
-        )
-        for c in clusters
-    ]
+# NOTE: Activity clusters endpoint has been archived - see archived/activity_clustering.py
+# The client app is no longer using the live feed / activity clustering functionality
+# Archived endpoint: GET /locations/activity-clusters

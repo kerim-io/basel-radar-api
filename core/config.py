@@ -34,6 +34,8 @@ class Settings:
 
     # QR Code
     QR_SECRET_SALT: str = os.getenv("QR_SECRET_SALT", "change-this-qr-salt-in-production")
+    # Use HTTPS URL so any phone can scan and open in browser (which redirects to app)
+    QR_DEEP_LINK_SCHEME: str = os.getenv("QR_DEEP_LINK_SCHEME", "https://baselradar.app/connect/")
 
     # Google Maps API
     GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")

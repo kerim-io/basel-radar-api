@@ -1,18 +1,71 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func, or_
+from sqlalchemy import select, desc, func, or_, and_
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 
 from db.database import get_async_session
-from db.models import Bounce, BounceInvite, User
+from db.models import Bounce, BounceInvite, BounceAttendee, User
 from api.dependencies import get_current_user
 from services.geofence import haversine_distance
+from api.routes.websocket import manager
 
 router = APIRouter(prefix="/bounces", tags=["bounces"])
 logger = logging.getLogger(__name__)
+
+# Attendees are considered "present" if seen within this time window
+ATTENDEE_EXPIRY_MINUTES = 15
+# Proximity radius for auto-checkin (in km)
+BOUNCE_PROXIMITY_KM = 0.1  # 100 meters
+
+
+async def get_active_attendees(
+    db: AsyncSession,
+    bounce_id: int,
+    include_details: bool = True
+) -> tuple[int, List["AttendeeInfo"]]:
+    """
+    Get active attendees for a bounce (seen within last 15 minutes).
+    Returns (count, attendee_list).
+    """
+    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=ATTENDEE_EXPIRY_MINUTES)
+
+    if include_details:
+        stmt = (
+            select(BounceAttendee, User)
+            .join(User, BounceAttendee.user_id == User.id)
+            .where(
+                BounceAttendee.bounce_id == bounce_id,
+                BounceAttendee.last_seen_at >= expiry_time
+            )
+            .order_by(BounceAttendee.joined_at.asc())
+        )
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        attendees = [
+            AttendeeInfo(
+                user_id=att.user_id,
+                nickname=user.nickname,
+                profile_picture=user.profile_picture,
+                joined_at=att.joined_at
+            )
+            for att, user in rows
+        ]
+        return len(attendees), attendees
+    else:
+        stmt = (
+            select(func.count(BounceAttendee.id))
+            .where(
+                BounceAttendee.bounce_id == bounce_id,
+                BounceAttendee.last_seen_at >= expiry_time
+            )
+        )
+        result = await db.execute(stmt)
+        count = result.scalar() or 0
+        return count, []
 
 
 # Request/Response Schemas
@@ -25,6 +78,13 @@ class BounceCreate(BaseModel):
     is_now: bool = False
     is_public: bool = False
     invite_user_ids: Optional[List[int]] = None
+
+
+class AttendeeInfo(BaseModel):
+    user_id: int
+    nickname: Optional[str]
+    profile_picture: Optional[str]
+    joined_at: datetime
 
 
 class BounceResponse(BaseModel):
@@ -41,6 +101,8 @@ class BounceResponse(BaseModel):
     is_public: bool
     status: str
     invite_count: int
+    attendee_count: int = 0
+    attendees: Optional[List[AttendeeInfo]] = None
     created_at: datetime
 
     class Config:
@@ -97,7 +159,8 @@ async def create_bounce(
             }
         )
 
-        return BounceResponse(
+        # Build response
+        bounce_response = BounceResponse(
             id=bounce.id,
             creator_id=bounce.creator_id,
             creator_nickname=current_user.nickname,
@@ -113,6 +176,29 @@ async def create_bounce(
             invite_count=invite_count,
             created_at=bounce.created_at
         )
+
+        # Broadcast via WebSocket
+        invited_ids = bounce_data.invite_user_ids or []
+        ws_message = {
+            "type": "new_bounce",
+            "bounce": bounce_response.model_dump(mode='json'),
+            "invited_user_ids": invited_ids
+        }
+
+        # If public, broadcast to everyone; otherwise only to invited users
+        if bounce.is_public:
+            await manager.broadcast(ws_message)
+        else:
+            # Send to creator and invited users only
+            for user_id in [current_user.id] + invited_ids:
+                if user_id in manager.active_connections:
+                    for conn in manager.active_connections[user_id]:
+                        try:
+                            await conn.send_json(ws_message)
+                        except Exception:
+                            pass
+
+        return bounce_response
 
     except Exception as e:
         await db.rollback()
@@ -185,6 +271,112 @@ async def get_bounces(
         )
         for bounce, user, invite_count in rows
     ]
+
+
+@router.get("/map", response_model=List[BounceResponse])
+async def get_map_bounces(
+    lat: float,
+    lng: float,
+    radius: float = 50.0,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get all bounces visible to the user for map display.
+
+    Returns:
+    - All public bounces within radius
+    - All bounces user is invited to (regardless of distance)
+    - All bounces user created (regardless of distance)
+
+    Args:
+        lat: User's latitude
+        lng: User's longitude
+        radius: Search radius in km for public bounces (default 50km)
+    """
+    now = datetime.now(timezone.utc)
+
+    invite_count_subq = (
+        select(func.count(BounceInvite.id))
+        .where(BounceInvite.bounce_id == Bounce.id)
+        .correlate(Bounce)
+        .scalar_subquery()
+    )
+
+    # Get IDs of bounces user is invited to
+    invited_bounce_ids = (
+        select(BounceInvite.bounce_id)
+        .where(BounceInvite.user_id == current_user.id)
+    )
+
+    # Get all active bounces that are:
+    # - public, OR
+    # - user is invited to, OR
+    # - user created
+    stmt = (
+        select(Bounce, User, invite_count_subq.label('invite_count'))
+        .join(User, Bounce.creator_id == User.id)
+        .where(Bounce.status == 'active')
+        .where(
+            or_(
+                Bounce.is_public == True,
+                Bounce.id.in_(invited_bounce_ids),
+                Bounce.creator_id == current_user.id
+            )
+        )
+        .order_by(Bounce.bounce_time.asc())
+    )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Filter: public bounces must be within radius, private ones always included
+    visible_bounces = []
+    seen_ids = set()
+
+    for bounce, user, invite_count in rows:
+        if bounce.id in seen_ids:
+            continue
+        seen_ids.add(bounce.id)
+
+        # Check if this bounce should be visible
+        is_mine = bounce.creator_id == current_user.id
+        is_invited = not bounce.is_public and not is_mine  # If we got it and it's not public/mine, we're invited
+
+        if bounce.is_public and not is_mine:
+            # Public bounce - check distance
+            distance = haversine_distance(lat, lng, bounce.latitude, bounce.longitude)
+            if distance > radius:
+                continue
+
+        # Get attendee info for public "now" bounces
+        attendee_count = 0
+        attendees = None
+        if bounce.is_public and bounce.is_now:
+            attendee_count, attendees = await get_active_attendees(db, bounce.id, include_details=True)
+
+        visible_bounces.append(
+            BounceResponse(
+                id=bounce.id,
+                creator_id=bounce.creator_id,
+                creator_nickname=user.nickname,
+                creator_profile_pic=user.profile_picture,
+                venue_name=bounce.venue_name,
+                venue_address=bounce.venue_address,
+                latitude=bounce.latitude,
+                longitude=bounce.longitude,
+                bounce_time=bounce.bounce_time,
+                is_now=bounce.is_now,
+                is_public=bounce.is_public,
+                status=bounce.status,
+                invite_count=invite_count or 0,
+                attendee_count=attendee_count,
+                attendees=attendees,
+                created_at=bounce.created_at
+            )
+        )
+
+    return visible_bounces
 
 
 @router.get("/mine", response_model=List[BounceResponse])
@@ -468,6 +660,82 @@ async def invite_to_bounce(
     return {"added": added, "total": len(existing_user_ids) + added}
 
 
+class InvitedUserInfo(BaseModel):
+    user_id: int
+    nickname: Optional[str]
+    first_name: Optional[str]
+    last_name: Optional[str]
+    profile_picture: Optional[str]
+    invited_at: datetime
+
+
+@router.get("/{bounce_id}/invites")
+async def get_bounce_invites(
+    bounce_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get list of users invited to a bounce.
+
+    Only accessible by:
+    - The bounce creator
+    - Users who are invited to the bounce
+    - Anyone if the bounce is public
+    """
+    # Get the bounce
+    result = await db.execute(
+        select(Bounce).where(Bounce.id == bounce_id)
+    )
+    bounce = result.scalar_one_or_none()
+
+    if not bounce:
+        raise HTTPException(status_code=404, detail="Bounce not found")
+
+    # Check access
+    is_creator = bounce.creator_id == current_user.id
+
+    # Check if user is invited
+    invite_check = await db.execute(
+        select(BounceInvite).where(
+            BounceInvite.bounce_id == bounce_id,
+            BounceInvite.user_id == current_user.id
+        )
+    )
+    is_invited = invite_check.scalar_one_or_none() is not None
+
+    if not (bounce.is_public or is_creator or is_invited):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Get all invited users
+    stmt = (
+        select(BounceInvite, User)
+        .join(User, BounceInvite.user_id == User.id)
+        .where(BounceInvite.bounce_id == bounce_id)
+        .order_by(BounceInvite.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    invites = [
+        InvitedUserInfo(
+            user_id=user.id,
+            nickname=user.nickname,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            profile_picture=user.profile_picture,
+            invited_at=invite.created_at
+        )
+        for invite, user in rows
+    ]
+
+    return {
+        "bounce_id": bounce_id,
+        "invite_count": len(invites),
+        "invites": invites
+    }
+
+
 @router.post("/{bounce_id}/archive", response_model=BounceResponse)
 async def archive_bounce(
     bounce_id: int,
@@ -517,3 +785,315 @@ async def archive_bounce(
         invite_count=invite_count,
         created_at=bounce.created_at
     )
+
+
+# ============== Attendee Tracking ==============
+# User can only be checked into ONE bounce at a time.
+# When near multiple bounces, client should offer a choice.
+
+
+class NearbyBounceInfo(BaseModel):
+    """Info about a nearby bounce the user can check into"""
+    id: int
+    venue_name: str
+    venue_address: Optional[str]
+    latitude: float
+    longitude: float
+    distance_meters: float
+    attendee_count: int
+    creator_nickname: Optional[str]
+
+
+class NearbyBouncesResponse(BaseModel):
+    """Response for nearby bounces check"""
+    current_checkin: Optional[int] = None  # bounce_id user is currently checked into
+    nearby_bounces: List[NearbyBounceInfo]
+
+
+@router.get("/nearby", response_model=NearbyBouncesResponse)
+async def get_nearby_bounces(
+    lat: float,
+    lng: float,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get public 'now' bounces within check-in proximity.
+
+    Called by client when user enters an area to see available bounces.
+    Returns:
+    - current_checkin: bounce_id if user is already checked in somewhere
+    - nearby_bounces: list of bounces within proximity that user can check into
+    """
+    # Check if user is already checked into a bounce
+    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=ATTENDEE_EXPIRY_MINUTES)
+    current_checkin_result = await db.execute(
+        select(BounceAttendee.bounce_id)
+        .where(
+            BounceAttendee.user_id == current_user.id,
+            BounceAttendee.last_seen_at >= expiry_time
+        )
+    )
+    current_checkin = current_checkin_result.scalar_one_or_none()
+
+    # Find all active public 'now' bounces
+    stmt = (
+        select(Bounce, User)
+        .join(User, Bounce.creator_id == User.id)
+        .where(
+            Bounce.is_public == True,
+            Bounce.is_now == True,
+            Bounce.status == 'active'
+        )
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    nearby = []
+    for bounce, creator in rows:
+        distance_km = haversine_distance(lat, lng, bounce.latitude, bounce.longitude)
+        if distance_km <= BOUNCE_PROXIMITY_KM:
+            # Get attendee count
+            attendee_count, _ = await get_active_attendees(db, bounce.id, include_details=False)
+
+            nearby.append(NearbyBounceInfo(
+                id=bounce.id,
+                venue_name=bounce.venue_name,
+                venue_address=bounce.venue_address,
+                latitude=bounce.latitude,
+                longitude=bounce.longitude,
+                distance_meters=distance_km * 1000,
+                attendee_count=attendee_count,
+                creator_nickname=creator.nickname
+            ))
+
+    # Sort by distance
+    nearby.sort(key=lambda b: b.distance_meters)
+
+    return NearbyBouncesResponse(
+        current_checkin=current_checkin,
+        nearby_bounces=nearby
+    )
+
+
+@router.post("/{bounce_id}/checkin")
+async def checkin_to_bounce(
+    bounce_id: int,
+    lat: float,
+    lng: float,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Check in to a public 'now' bounce.
+
+    User must be within 100m of the bounce location.
+    User can only be checked into ONE bounce at a time - checking into a new
+    bounce will automatically check them out of any previous bounce.
+    """
+    # Get the bounce
+    result = await db.execute(
+        select(Bounce).where(Bounce.id == bounce_id)
+    )
+    bounce = result.scalar_one_or_none()
+
+    if not bounce:
+        raise HTTPException(status_code=404, detail="Bounce not found")
+
+    if not bounce.is_public:
+        raise HTTPException(status_code=403, detail="Can only check in to public bounces")
+
+    if not bounce.is_now:
+        raise HTTPException(status_code=400, detail="Can only check in to 'now' bounces")
+
+    if bounce.status != 'active':
+        raise HTTPException(status_code=400, detail="Bounce is not active")
+
+    # Check proximity
+    distance = haversine_distance(lat, lng, bounce.latitude, bounce.longitude)
+    if distance > BOUNCE_PROXIMITY_KM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too far from bounce location. You are {distance*1000:.0f}m away, must be within {BOUNCE_PROXIMITY_KM*1000:.0f}m"
+        )
+
+    now = datetime.now(timezone.utc)
+    previous_bounce_id = None
+
+    # Check if user is already checked into ANY bounce (not just this one)
+    existing_checkins = await db.execute(
+        select(BounceAttendee)
+        .where(BounceAttendee.user_id == current_user.id)
+    )
+    existing_attendees = existing_checkins.scalars().all()
+
+    # Remove user from any other bounces
+    for attendee in existing_attendees:
+        if attendee.bounce_id != bounce_id:
+            previous_bounce_id = attendee.bounce_id
+            await db.delete(attendee)
+            logger.info(f"User {current_user.id} auto-checked out of bounce {attendee.bounce_id}")
+
+    # Check if already at this bounce
+    current_attendee = next(
+        (a for a in existing_attendees if a.bounce_id == bounce_id),
+        None
+    )
+
+    if current_attendee:
+        # Update last seen time
+        current_attendee.last_seen_at = now
+    else:
+        # Create new attendance record
+        attendee = BounceAttendee(
+            bounce_id=bounce_id,
+            user_id=current_user.id,
+            joined_at=now,
+            last_seen_at=now
+        )
+        db.add(attendee)
+
+    await db.commit()
+
+    # Broadcast update for previous bounce if user switched
+    if previous_bounce_id:
+        prev_count, prev_attendees = await get_active_attendees(db, previous_bounce_id, include_details=True)
+        await manager.broadcast({
+            "type": "bounce_attendee_update",
+            "bounce_id": previous_bounce_id,
+            "attendee_count": prev_count,
+            "attendees": [a.model_dump(mode='json') for a in prev_attendees]
+        })
+
+    # Get updated attendee count for current bounce
+    count, attendees = await get_active_attendees(db, bounce_id, include_details=True)
+
+    logger.info(f"User {current_user.id} checked in to bounce {bounce_id}. Total attendees: {count}")
+
+    # Broadcast attendee update via WebSocket
+    await manager.broadcast({
+        "type": "bounce_attendee_update",
+        "bounce_id": bounce_id,
+        "attendee_count": count,
+        "attendees": [a.model_dump(mode='json') for a in attendees]
+    })
+
+    return {
+        "success": True,
+        "bounce_id": bounce_id,
+        "attendee_count": count,
+        "attendees": attendees,
+        "previous_bounce_id": previous_bounce_id  # Let client know if they were auto-checked out
+    }
+
+
+@router.post("/{bounce_id}/leave")
+async def leave_bounce(
+    bounce_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Leave a bounce (remove attendance record).
+    """
+    result = await db.execute(
+        select(BounceAttendee).where(
+            BounceAttendee.bounce_id == bounce_id,
+            BounceAttendee.user_id == current_user.id
+        )
+    )
+    attendee = result.scalar_one_or_none()
+
+    if not attendee:
+        raise HTTPException(status_code=404, detail="Not checked in to this bounce")
+
+    await db.delete(attendee)
+    await db.commit()
+
+    # Get updated attendee count
+    count, attendees = await get_active_attendees(db, bounce_id, include_details=True)
+
+    logger.info(f"User {current_user.id} left bounce {bounce_id}. Total attendees: {count}")
+
+    # Broadcast attendee update
+    await manager.broadcast({
+        "type": "bounce_attendee_update",
+        "bounce_id": bounce_id,
+        "attendee_count": count,
+        "attendees": [a.model_dump(mode='json') for a in attendees]
+    })
+
+    return {"success": True, "bounce_id": bounce_id}
+
+
+@router.get("/my-checkin")
+async def get_my_checkin(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get the bounce the current user is checked into (if any).
+    """
+    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=ATTENDEE_EXPIRY_MINUTES)
+
+    result = await db.execute(
+        select(BounceAttendee, Bounce, User)
+        .join(Bounce, BounceAttendee.bounce_id == Bounce.id)
+        .join(User, Bounce.creator_id == User.id)
+        .where(
+            BounceAttendee.user_id == current_user.id,
+            BounceAttendee.last_seen_at >= expiry_time
+        )
+    )
+    row = result.first()
+
+    if not row:
+        return {"checked_in": False, "bounce": None}
+
+    attendee, bounce, creator = row
+    count, _ = await get_active_attendees(db, bounce.id, include_details=False)
+
+    return {
+        "checked_in": True,
+        "bounce": {
+            "id": bounce.id,
+            "venue_name": bounce.venue_name,
+            "venue_address": bounce.venue_address,
+            "latitude": bounce.latitude,
+            "longitude": bounce.longitude,
+            "creator_nickname": creator.nickname,
+            "attendee_count": count,
+            "checked_in_at": attendee.joined_at,
+            "last_seen_at": attendee.last_seen_at
+        }
+    }
+
+
+@router.get("/{bounce_id}/attendees")
+async def get_bounce_attendees(
+    bounce_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get list of current attendees at a public now bounce.
+    """
+    # Check bounce exists and is public
+    result = await db.execute(
+        select(Bounce).where(Bounce.id == bounce_id)
+    )
+    bounce = result.scalar_one_or_none()
+
+    if not bounce:
+        raise HTTPException(status_code=404, detail="Bounce not found")
+
+    if not bounce.is_public:
+        raise HTTPException(status_code=403, detail="Attendee list only available for public bounces")
+
+    count, attendees = await get_active_attendees(db, bounce_id, include_details=True)
+
+    return {
+        "bounce_id": bounce_id,
+        "attendee_count": count,
+        "attendees": attendees
+    }

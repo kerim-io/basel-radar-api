@@ -1,5 +1,10 @@
 """Geocoding endpoints for Art Basel backend"""
 
+from typing import List, Optional
+import aiohttp
+import ssl
+import certifi
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -121,3 +126,147 @@ async def reverse_geocode_get(
         raise HTTPException(status_code=404, detail="Location not found")
 
     return result
+
+
+# ============== Places Autocomplete ==============
+
+class PlacePrediction(BaseModel):
+    """A single place prediction from autocomplete"""
+    place_id: str
+    name: str  # Main text (e.g., "Wynwood Walls")
+    address: str  # Secondary text (e.g., "Miami, FL, USA")
+    full_description: str  # Combined description
+
+
+class PlaceDetails(BaseModel):
+    """Detailed place information including coordinates"""
+    place_id: str
+    name: str
+    address: str
+    latitude: float
+    longitude: float
+    types: List[str] = []
+
+
+class AutocompleteResponse(BaseModel):
+    """Response from places autocomplete"""
+    predictions: List[PlacePrediction]
+
+
+GOOGLE_PLACES_AUTOCOMPLETE_URL = "https://maps.googleapis.com/maps/api/place/autocomplete/json"
+GOOGLE_PLACES_DETAILS_URL = "https://maps.googleapis.com/maps/api/place/details/json"
+
+# SSL context for aiohttp requests to Google APIs
+def get_ssl_context():
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+@router.get("/places/autocomplete", response_model=AutocompleteResponse)
+async def places_autocomplete(
+    query: str = Query(..., min_length=2, description="Search query"),
+    lat: Optional[float] = Query(None, ge=-90, le=90, description="User latitude for location bias"),
+    lng: Optional[float] = Query(None, ge=-180, le=180, description="User longitude for location bias"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Google Places Autocomplete for venue search.
+
+    Returns place predictions as user types. Use with debounce on client (300-500ms).
+
+    Example: /geocoding/places/autocomplete?query=wynwood&lat=25.79&lng=-80.13
+    """
+    if not settings.GOOGLE_MAPS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Places API not configured. GOOGLE_MAPS_API_KEY required."
+        )
+
+    params = {
+        "input": query,
+        "key": settings.GOOGLE_MAPS_API_KEY,
+        "types": "establishment",  # Focus on businesses/venues
+    }
+
+    # Add location bias if provided (biases results toward this location)
+    if lat is not None and lng is not None:
+        params["location"] = f"{lat},{lng}"
+        params["radius"] = "50000"  # 50km radius bias
+
+    try:
+        ssl_ctx = get_ssl_context()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=params, ssl=ssl_ctx) as response:
+                data = await response.json()
+
+                if data.get("status") not in ("OK", "ZERO_RESULTS"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Places API error: {data.get('status')}"
+                    )
+
+                predictions = []
+                for pred in data.get("predictions", []):
+                    structured = pred.get("structured_formatting", {})
+                    predictions.append(PlacePrediction(
+                        place_id=pred["place_id"],
+                        name=structured.get("main_text", pred.get("description", "")),
+                        address=structured.get("secondary_text", ""),
+                        full_description=pred.get("description", "")
+                    ))
+
+                return AutocompleteResponse(predictions=predictions)
+
+    except aiohttp.ClientError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Places API: {str(e)}")
+
+
+@router.get("/places/details/{place_id}", response_model=PlaceDetails)
+async def get_place_details(
+    place_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get full details for a place including coordinates.
+
+    Call this after user selects a place from autocomplete to get lat/lng.
+
+    Example: /geocoding/places/details/ChIJN1t_tDeuEmsRUsoyG83frY4
+    """
+    if not settings.GOOGLE_MAPS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Places API not configured. GOOGLE_MAPS_API_KEY required."
+        )
+
+    params = {
+        "place_id": place_id,
+        "key": settings.GOOGLE_MAPS_API_KEY,
+        "fields": "name,formatted_address,geometry,types"
+    }
+
+    try:
+        ssl_ctx = get_ssl_context()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(GOOGLE_PLACES_DETAILS_URL, params=params, ssl=ssl_ctx) as response:
+                data = await response.json()
+
+                if data.get("status") != "OK":
+                    raise HTTPException(
+                        status_code=404 if data.get("status") == "NOT_FOUND" else 502,
+                        detail=f"Place not found or API error: {data.get('status')}"
+                    )
+
+                result = data.get("result", {})
+                location = result.get("geometry", {}).get("location", {})
+
+                return PlaceDetails(
+                    place_id=place_id,
+                    name=result.get("name", ""),
+                    address=result.get("formatted_address", ""),
+                    latitude=location.get("lat", 0),
+                    longitude=location.get("lng", 0),
+                    types=result.get("types", [])
+                )
+
+    except aiohttp.ClientError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Places API: {str(e)}")

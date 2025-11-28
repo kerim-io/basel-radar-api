@@ -13,8 +13,6 @@ from db.database import get_async_session
 from db.models import Post, User, Like
 from api.dependencies import get_current_user
 from core.config import settings
-from services.activity_clustering import get_activity_clusters
-from api.routes.websocket import broadcast_activity_clusters
 
 router = APIRouter(prefix="/posts", tags=["posts"])
 logger = logging.getLogger(__name__)
@@ -219,24 +217,8 @@ async def create_post(
             }
         )
 
-        # Broadcast updated activity clusters if post has location
-        if post.latitude is not None and post.longitude is not None:
-            try:
-                clusters = await get_activity_clusters(db)
-                cluster_data = [
-                    {
-                        "cluster_id": c.cluster_id,
-                        "latitude": c.latitude,
-                        "longitude": c.longitude,
-                        "count": c.count,
-                        "venue_name": c.venue_name,
-                        "last_activity": c.last_activity.isoformat()
-                    }
-                    for c in clusters
-                ]
-                await broadcast_activity_clusters(cluster_data)
-            except Exception as cluster_err:
-                logger.warning("Failed to broadcast activity clusters", extra={"error": str(cluster_err)})
+        # NOTE: Activity cluster broadcasting has been archived
+        # See archived/websocket_feed.py for the removed functionality
 
         return PostResponse(
             id=post.id,
@@ -260,126 +242,6 @@ async def create_post(
         )
 
 
-@router.get("/feed", response_model=List[PostResponse])
-async def get_feed(
-    limit: int = 50,
-    offset: int = 0,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_session)
-):
-    """Get feed of posts with likes (optimized single query)"""
-    from sqlalchemy import case
-
-    # Optimized single query with aggregations and conditional logic
-    stmt = (
-        select(
-            Post,
-            User,
-            func.count(Like.id).label('likes_count'),
-            func.max(case((Like.user_id == current_user.id, 1), else_=0)).label('is_liked')
-        )
-        .join(User, Post.user_id == User.id)
-        .outerjoin(Like, Post.id == Like.post_id)
-        .group_by(Post.id, User.id)
-        .order_by(desc(Post.created_at))
-        .limit(limit)
-        .offset(offset)
-    )
-
-    result = await db.execute(stmt)
-    rows = result.all()
-
-    return [
-        PostResponse(
-            id=post.id,
-            user_id=post.user_id,
-            username=user.nickname,
-            content=post.content,
-            timestamp=post.created_at,
-            profile_pic_url=user.profile_picture,
-            media_url=post.media_url,
-            media_type=post.media_type,
-            latitude=post.latitude,
-            longitude=post.longitude,
-            venue_name=post.venue_name,
-            venue_id=post.venue_id,
-            likes_count=likes_count or 0,
-            is_liked_by_current_user=bool(is_liked)
-        )
-        for post, user, likes_count, is_liked in rows
-    ]
-
-
-@router.get("/by-time", response_model=List[PostResponse])
-async def get_posts_by_time(
-    date: str,  # YYYY-MM-DD
-    hour: Optional[int] = None,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_session)
-):
-    """Get posts by specific date/hour for timeline scrubbing (optimized single query)"""
-    from datetime import datetime, timedelta
-    from sqlalchemy import case
-
-    # Validate date format
-    try:
-        target_date = datetime.fromisoformat(date)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date format. Expected YYYY-MM-DD"
-        )
-
-    # Validate hour if provided
-    if hour is not None:
-        if not isinstance(hour, int) or not (0 <= hour <= 23):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Hour must be an integer between 0 and 23"
-            )
-
-    if hour is not None:
-        start_time = target_date.replace(hour=hour, minute=0, second=0)
-        end_time = start_time + timedelta(hours=1)
-    else:
-        start_time = target_date.replace(hour=0, minute=0, second=0)
-        end_time = start_time + timedelta(days=1)
-
-    # Optimized single query with aggregations
-    stmt = (
-        select(
-            Post,
-            User,
-            func.count(Like.id).label('likes_count'),
-            func.max(case((Like.user_id == current_user.id, 1), else_=0)).label('is_liked')
-        )
-        .join(User, Post.user_id == User.id)
-        .outerjoin(Like, Post.id == Like.post_id)
-        .where(Post.created_at >= start_time)
-        .where(Post.created_at < end_time)
-        .group_by(Post.id, User.id)
-        .order_by(desc(Post.created_at))
-    )
-
-    result = await db.execute(stmt)
-    rows = result.all()
-
-    return [
-        PostResponse(
-            id=post.id,
-            user_id=post.user_id,
-            username=user.nickname,
-            content=post.content,
-            timestamp=post.created_at,
-            profile_pic_url=user.profile_picture,
-            media_url=post.media_url,
-            media_type=post.media_type,
-            latitude=post.latitude,
-            longitude=post.longitude,
-            venue_name=post.venue_name,
-            venue_id=post.venue_id,
-            likes_count=likes_count or 0,
-            is_liked_by_current_user=bool(is_liked)
-        )
-        for post, user, likes_count, is_liked in rows
-    ]
+# NOTE: Feed endpoints have been archived - see archived/posts_feed.py
+# The client app is no longer using the live feed functionality
+# Archived endpoints: GET /posts/feed, GET /posts/by-time

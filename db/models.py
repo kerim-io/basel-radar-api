@@ -34,6 +34,11 @@ class User(Base):
     # QR Code token for mutual connections
     qr_token = Column(String(64), unique=True, index=True, nullable=True)
 
+    # Social handles
+    instagram_handle = Column(String(30), nullable=True)
+    instagram_profile_pic = Column(String(500), nullable=True)
+    linkedin_handle = Column(String(100), nullable=True)
+
     # Legacy fields
     username = Column(String(50), nullable=True)
     bio = Column(String(500), nullable=True)
@@ -198,6 +203,7 @@ class Bounce(Base):
     # Relationships
     creator = relationship("User", back_populates="bounces_created")
     invites = relationship("BounceInvite", back_populates="bounce", cascade="all, delete-orphan")
+    attendees = relationship("BounceAttendee", back_populates="bounce", cascade="all, delete-orphan")
 
 
 class BounceInvite(Base):
@@ -212,3 +218,22 @@ class BounceInvite(Base):
     # Relationships
     bounce = relationship("Bounce", back_populates="invites")
     user = relationship("User", back_populates="bounce_invites")
+
+
+class BounceAttendee(Base):
+    """
+    Tracks users currently at a bounce location.
+    Updated when users are within proximity of an active public bounce.
+    Entries expire after 15 minutes of no updates.
+    """
+    __tablename__ = "bounce_attendees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bounce_id = Column(Integer, ForeignKey("bounces.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    # Relationships
+    bounce = relationship("Bounce", back_populates="attendees")
+    user = relationship("User")

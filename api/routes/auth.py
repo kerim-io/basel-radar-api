@@ -19,6 +19,9 @@ PASSCODE = "ARTBASEL2024"
 class AppleAuthRequest(BaseModel):
     code: str
     redirect_uri: str
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    email: Optional[str] = None  # Email from iOS (Apple only sends on first auth)
 
 
 class PasscodeAuthRequest(BaseModel):
@@ -49,7 +52,8 @@ async def apple_signin(
         # Verify Apple token
         apple_data = await verify_apple_token(request.code, request.redirect_uri)
         apple_user_id = apple_data["user_id"]
-        email = apple_data.get("email")
+        # Prefer email from iOS request (Apple sends it), fallback to token email
+        email = request.email or apple_data.get("email")
 
         # Check if user exists
         result = await db.execute(
@@ -63,11 +67,28 @@ async def apple_signin(
                 apple_user_id=apple_user_id,
                 email=email,
                 username=email.split("@")[0] if email else f"user_{apple_user_id[:8]}",
+                first_name=request.given_name,
+                last_name=request.family_name,
                 is_active=True
             )
             db.add(user)
             await db.commit()
             await db.refresh(user)
+        else:
+            # Update existing user with name if provided and not already set
+            updated = False
+            if request.given_name and not user.first_name:
+                user.first_name = request.given_name
+                updated = True
+            if request.family_name and not user.last_name:
+                user.last_name = request.family_name
+                updated = True
+            if request.email and not user.email:
+                user.email = request.email
+                updated = True
+            if updated:
+                await db.commit()
+                await db.refresh(user)
 
         # Create tokens
         access_token = create_access_token({"sub": str(user.id)})

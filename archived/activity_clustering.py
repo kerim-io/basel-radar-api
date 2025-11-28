@@ -1,8 +1,14 @@
 """
-Activity Clustering Service
-
-Aggregates post locations into anonymized clusters for the map view.
+ARCHIVED: Activity Clustering Service
+=====================================
+This service aggregated post locations into anonymized clusters for the map view.
 Shows "X people here" without revealing usernames.
+
+Original location: services/activity_clustering.py
+Archived on: 2025-11-27
+
+To restore: Move this file back to services/activity_clustering.py
+and restore the activity-clusters endpoint in api/routes/locations.py
 """
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
