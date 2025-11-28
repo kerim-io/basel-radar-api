@@ -39,6 +39,29 @@ async def create_db_and_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Run migrations for new columns
+    await run_migrations()
+
+
+async def run_migrations():
+    """Run any pending column additions"""
+    from sqlalchemy import text
+
+    migrations = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_handle VARCHAR(30)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_profile_pic TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_handle VARCHAR(100)",
+    ]
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        for migration in migrations:
+            try:
+                await conn.execute(text(migration))
+            except Exception as e:
+                # Column might already exist or other non-critical error
+                pass
+
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     session_maker = get_session_maker()
