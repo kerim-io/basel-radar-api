@@ -52,6 +52,10 @@ async def run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_handle VARCHAR(30)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_profile_pic TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_handle VARCHAR(100)",
+        # Places table
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS bounce_count INTEGER DEFAULT 0",
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS post_count INTEGER DEFAULT 0",
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE",
         # Posts table
         "ALTER TABLE posts ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255)",
         "ALTER TABLE posts ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255)",
