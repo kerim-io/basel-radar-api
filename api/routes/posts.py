@@ -123,7 +123,7 @@ class PostCreate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     venue_name: Optional[str] = None
-    venue_id: Optional[str] = None
+    google_place_id: Optional[str] = None  # Google Places ID for venue
 
 
 class PostResponse(BaseModel):
@@ -138,7 +138,7 @@ class PostResponse(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     venue_name: Optional[str] = None
-    venue_id: Optional[str] = None
+    google_place_id: Optional[str] = None  # Google Places ID for venue
     likes_count: int = 0
     is_liked_by_current_user: bool = False
 
@@ -197,7 +197,7 @@ async def create_post(
             latitude=post_data.latitude,
             longitude=post_data.longitude,
             venue_name=post_data.venue_name,
-            venue_id=post_data.venue_id
+            google_place_id=post_data.google_place_id
         )
         db.add(post)
         await db.commit()
@@ -232,7 +232,7 @@ async def create_post(
             latitude=post.latitude,
             longitude=post.longitude,
             venue_name=post.venue_name,
-            venue_id=post.venue_id
+            google_place_id=post.google_place_id
         )
     except Exception as e:
         await db.rollback()

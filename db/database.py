@@ -54,7 +54,12 @@ async def run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_handle VARCHAR(100)",
         # Posts table
         "ALTER TABLE posts ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255)",
-        "ALTER TABLE posts ADD COLUMN IF NOT EXISTS venue_id VARCHAR(255)",
+        "ALTER TABLE posts ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255)",
+        # Bounces table
+        "ALTER TABLE bounces ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255)",
+        # Indexes for google_place_id
+        "CREATE INDEX IF NOT EXISTS ix_posts_google_place_id ON posts(google_place_id)",
+        "CREATE INDEX IF NOT EXISTS ix_bounces_google_place_id ON bounces(google_place_id)",
     ]
 
     engine = get_engine()

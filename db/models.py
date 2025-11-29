@@ -86,7 +86,7 @@ class Post(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     venue_name = Column(String(255), nullable=True)  # Venue name from MapKit (e.g., "Hooters Miami")
-    venue_id = Column(String(255), nullable=True)  # Venue identifier (typically lat,lon)
+    google_place_id = Column(String(255), nullable=True, index=True)  # Google Places ID for venue
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     # Relationships
@@ -180,12 +180,14 @@ class Bounce(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    place_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    # Location
+    # Location (kept for backwards compatibility and quick access)
     venue_name = Column(String(255), nullable=False)
     venue_address = Column(String(500), nullable=True)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
+    google_place_id = Column(String(255), nullable=True, index=True)  # Google's place_id for linking
 
     # Timing
     bounce_time = Column(DateTime(timezone=True), nullable=False)
@@ -202,6 +204,7 @@ class Bounce(Base):
 
     # Relationships
     creator = relationship("User", back_populates="bounces_created")
+    place = relationship("Place", back_populates="bounces")
     invites = relationship("BounceInvite", back_populates="bounce", cascade="all, delete-orphan")
     attendees = relationship("BounceAttendee", back_populates="bounce", cascade="all, delete-orphan")
 
@@ -237,3 +240,46 @@ class BounceAttendee(Base):
     # Relationships
     bounce = relationship("Bounce", back_populates="attendees")
     user = relationship("User")
+
+
+class Place(Base):
+    """
+    Stores Google Places data to avoid duplicate API calls.
+    When a bounce is created, the place is stored/linked here.
+    """
+    __tablename__ = "places"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_place_id = Column(String(255), unique=True, index=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    address = Column(String(500), nullable=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    types = Column(Text, nullable=True)  # JSON array of place types
+    bounce_count = Column(Integer, default=1, nullable=False)  # Incremented when new bounces reference this place
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    photos = relationship("GooglePic", back_populates="place", cascade="all, delete-orphan")
+    bounces = relationship("Bounce", back_populates="place")
+
+
+class GooglePic(Base):
+    """
+    Stores Google Places photos for a place.
+    Up to 5 photos per place.
+    """
+    __tablename__ = "google_pics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    place_id = Column(Integer, ForeignKey("places.id", ondelete="CASCADE"), nullable=False, index=True)
+    photo_reference = Column(String(500), nullable=False)  # Google photo reference
+    photo_url = Column(Text, nullable=True)  # Cached photo URL (optional)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    attributions = Column(Text, nullable=True)  # JSON array of attributions
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    place = relationship("Place", back_populates="photos")

@@ -7,9 +7,10 @@ from datetime import datetime, timezone, timedelta
 import logging
 
 from db.database import get_async_session
-from db.models import Bounce, BounceInvite, BounceAttendee, User
+from db.models import Bounce, BounceInvite, BounceAttendee, User, Place, GooglePic
 from api.dependencies import get_current_user
 from services.geofence import haversine_distance
+from services.places import get_place_with_photos
 from api.routes.websocket import manager
 
 router = APIRouter(prefix="/bounces", tags=["bounces"])
@@ -74,6 +75,7 @@ class BounceCreate(BaseModel):
     venue_address: Optional[str] = None
     latitude: float
     longitude: float
+    google_place_id: Optional[str] = None  # Google Places ID for storing place data
     bounce_time: datetime
     is_now: bool = False
     is_public: bool = False
@@ -122,13 +124,30 @@ async def create_bounce(
 ):
     """Create a new bounce with optional invites"""
     try:
+        # Store/link the place if google_place_id is provided
+        place_id = None
+        if bounce_data.google_place_id:
+            place = await get_place_with_photos(
+                db=db,
+                google_place_id=bounce_data.google_place_id,
+                venue_name=bounce_data.venue_name,
+                venue_address=bounce_data.venue_address,
+                latitude=bounce_data.latitude,
+                longitude=bounce_data.longitude
+            )
+            if place:
+                place_id = place.id
+                logger.info(f"Linked bounce to place {place.id} ({place.google_place_id})")
+
         # Create the bounce
         bounce = Bounce(
             creator_id=current_user.id,
+            place_id=place_id,
             venue_name=bounce_data.venue_name,
             venue_address=bounce_data.venue_address,
             latitude=bounce_data.latitude,
             longitude=bounce_data.longitude,
+            google_place_id=bounce_data.google_place_id,
             bounce_time=bounce_data.bounce_time,
             is_now=bounce_data.is_now,
             is_public=bounce_data.is_public
