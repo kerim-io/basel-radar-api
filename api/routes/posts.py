@@ -124,7 +124,7 @@ class PostCreate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     venue_name: Optional[str] = None
-    google_place_id: Optional[str] = None  # Google Places ID for venue
+    place_id: Optional[str] = None  # Google Places ID for venue
 
 
 class PostResponse(BaseModel):
@@ -139,7 +139,7 @@ class PostResponse(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     venue_name: Optional[str] = None
-    google_place_id: Optional[str] = None  # Google Places ID for venue
+    place_id: Optional[str] = None  # Google Places ID for venue
     likes_count: int = 0
     is_liked_by_current_user: bool = False
 
@@ -190,12 +190,12 @@ async def create_post(
             )
 
     try:
-        # Store/link the place if google_place_id is provided
-        place_id = None
-        if post_data.google_place_id:
+        # Store/link the place if place_id is provided
+        places_fk_id = None
+        if post_data.place_id:
             place = await get_place_with_photos(
                 db=db,
-                google_place_id=post_data.google_place_id,
+                place_id=post_data.place_id,
                 venue_name=post_data.venue_name or "",
                 venue_address=None,
                 latitude=post_data.latitude or 0,
@@ -203,19 +203,19 @@ async def create_post(
                 source="post"
             )
             if place:
-                place_id = place.id
-                logger.info(f"Linked post to place {place.id} ({place.google_place_id})")
+                places_fk_id = place.id
+                logger.info(f"Linked post to place {place.id} ({place.place_id})")
 
         post = Post(
             user_id=current_user.id,
-            place_id=place_id,
+            places_fk_id=places_fk_id,
             content=content,
             media_url=post_data.media_url,
             media_type=post_data.media_type,
             latitude=post_data.latitude,
             longitude=post_data.longitude,
             venue_name=post_data.venue_name,
-            google_place_id=post_data.google_place_id
+            place_id=post_data.place_id
         )
         db.add(post)
         await db.commit()
@@ -250,7 +250,7 @@ async def create_post(
             latitude=post.latitude,
             longitude=post.longitude,
             venue_name=post.venue_name,
-            google_place_id=post.google_place_id
+            place_id=post.place_id
         )
     except Exception as e:
         await db.rollback()

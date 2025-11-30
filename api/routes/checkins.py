@@ -120,10 +120,20 @@ async def get_recent_checkins(
 # VENUE CHECK-IN ENDPOINTS
 # ============================================================================
 
+class VenueCheckInCreate(BaseModel):
+    """Request body for venue check-in"""
+    latitude: float  # User's current location
+    longitude: float
+    venue_name: str
+    venue_address: Optional[str] = None
+    venue_lat: float  # Venue's location
+    venue_lng: float
+
+
 class VenueCheckInResponse(BaseModel):
     id: int
     user_id: int
-    google_place_id: str
+    place_id: str
     venue_name: Optional[str]
     checked_in_at: datetime
     is_active: bool
@@ -133,7 +143,7 @@ class VenueCheckInResponse(BaseModel):
 
 
 class VenueCheckInCountResponse(BaseModel):
-    google_place_id: str
+    place_id: str
     count: int
 
 
@@ -148,14 +158,14 @@ class VenueAttendeeResponse(BaseModel):
 
 
 class VenueAttendeesResponse(BaseModel):
-    google_place_id: str
+    place_id: str
     count: int
     attendees: List[VenueAttendeeResponse]
     can_see_details: bool  # True if user is part of a bounce at this venue
 
 
 class VenueWithCheckInsResponse(BaseModel):
-    google_place_id: str
+    place_id: str
     name: str
     address: Optional[str]
     latitude: float
@@ -183,10 +193,10 @@ async def get_venues_with_checkins_in_area(
 
     expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
 
-    # Get all active check-ins grouped by google_place_id
+    # Get all active check-ins grouped by place_id
     result = await db.execute(
         select(
-            CheckIn.google_place_id,
+            CheckIn.place_id,
             CheckIn.location_name,
             CheckIn.latitude,
             CheckIn.longitude,
@@ -196,11 +206,11 @@ async def get_venues_with_checkins_in_area(
             and_(
                 CheckIn.is_active == True,
                 CheckIn.last_seen_at >= expiry_time,
-                CheckIn.google_place_id.isnot(None)
+                CheckIn.place_id.isnot(None)
             )
         )
         .group_by(
-            CheckIn.google_place_id,
+            CheckIn.place_id,
             CheckIn.location_name,
             CheckIn.latitude,
             CheckIn.longitude
@@ -215,7 +225,7 @@ async def get_venues_with_checkins_in_area(
             # Try to get photos from Place table
             photos = []
             place_result = await db.execute(
-                select(Place).where(Place.google_place_id == row.google_place_id)
+                select(Place).where(Place.place_id == row.place_id)
             )
             place = place_result.scalar_one_or_none()
             if place:
@@ -229,7 +239,7 @@ async def get_venues_with_checkins_in_area(
             venue_name = (place.name if place else None) or row.location_name or "Unknown Venue"
 
             venues.append(VenueWithCheckInsResponse(
-                google_place_id=row.google_place_id,
+                place_id=row.place_id,
                 name=venue_name,
                 address=place.address if place else None,
                 latitude=row.latitude,
@@ -241,26 +251,25 @@ async def get_venues_with_checkins_in_area(
     return VenuesWithCheckInsResponse(venues=venues)
 
 
-@router.post("/venue/{google_place_id}", response_model=VenueCheckInResponse)
+@router.post("/venue/{place_id}", response_model=VenueCheckInResponse)
 async def checkin_to_venue(
-    google_place_id: str,
-    lat: float,
-    lng: float,
+    place_id: str,
+    checkin_data: VenueCheckInCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
     """
-    Check in to a venue by Google Place ID.
+    Check in to a venue by Place ID.
     User must be within 100m of the venue location.
     """
     # Get or create the Place record
     place = await get_place_with_photos(
         db=db,
-        google_place_id=google_place_id,
-        venue_name="",  # Will be fetched from Google API
-        venue_address=None,
-        latitude=lat,  # User's location as fallback
-        longitude=lng,
+        place_id=place_id,
+        venue_name=checkin_data.venue_name,
+        venue_address=checkin_data.venue_address,
+        latitude=checkin_data.venue_lat,
+        longitude=checkin_data.venue_lng,
         source="checkin"
     )
 
@@ -268,7 +277,10 @@ async def checkin_to_venue(
         raise HTTPException(status_code=404, detail="Place not found")
 
     # Verify user is within proximity
-    distance = haversine_distance(lat, lng, place.latitude, place.longitude)
+    distance = haversine_distance(
+        checkin_data.latitude, checkin_data.longitude,
+        place.latitude, place.longitude
+    )
     if distance > CHECKIN_PROXIMITY_METERS:
         raise HTTPException(
             status_code=400,
@@ -281,7 +293,7 @@ async def checkin_to_venue(
         select(CheckIn).where(
             and_(
                 CheckIn.user_id == current_user.id,
-                CheckIn.google_place_id == google_place_id,
+                CheckIn.place_id == place_id,
                 CheckIn.is_active == True,
                 CheckIn.last_seen_at >= expiry_time
             )
@@ -292,29 +304,21 @@ async def checkin_to_venue(
     if existing:
         # Update last_seen_at to refresh the check-in
         existing.last_seen_at = datetime.now(timezone.utc)
-        existing.latitude = lat
-        existing.longitude = lng
+        existing.latitude = checkin_data.latitude
+        existing.longitude = checkin_data.longitude
         await db.commit()
         await db.refresh(existing)
 
         return VenueCheckInResponse(
             id=existing.id,
             user_id=existing.user_id,
-            google_place_id=google_place_id,
+            place_id=place_id,
             venue_name=place.name,
             checked_in_at=existing.created_at,
             is_active=existing.is_active
         )
 
     # Deactivate any other active check-ins for this user (user can only be at one place)
-    await db.execute(
-        select(CheckIn).where(
-            and_(
-                CheckIn.user_id == current_user.id,
-                CheckIn.is_active == True
-            )
-        )
-    )
     result = await db.execute(
         select(CheckIn).where(
             and_(
@@ -329,11 +333,11 @@ async def checkin_to_venue(
     # Create new check-in
     checkin = CheckIn(
         user_id=current_user.id,
-        latitude=lat,
-        longitude=lng,
+        latitude=checkin_data.latitude,
+        longitude=checkin_data.longitude,
         location_name=place.name,
-        google_place_id=google_place_id,
-        place_id=place.id,
+        place_id=place_id,
+        places_fk_id=place.id,
         last_seen_at=datetime.now(timezone.utc),
         is_active=True
     )
@@ -344,28 +348,27 @@ async def checkin_to_venue(
     return VenueCheckInResponse(
         id=checkin.id,
         user_id=checkin.user_id,
-        google_place_id=google_place_id,
+        place_id=place_id,
         venue_name=place.name,
         checked_in_at=checkin.created_at,
         is_active=checkin.is_active
     )
 
 
-@router.get("/venue/{google_place_id}/count", response_model=VenueCheckInCountResponse)
+@router.get("/venue/{place_id}/count", response_model=VenueCheckInCountResponse)
 async def get_venue_checkin_count(
-    google_place_id: str,
+    place_id: str,
     db: AsyncSession = Depends(get_async_session)
 ):
     """
     Get count of people checked in at venue (public, no auth required).
-    Only counts check-ins within the last 15 minutes.
     """
     expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
 
     result = await db.execute(
         select(func.count(CheckIn.id)).where(
             and_(
-                CheckIn.google_place_id == google_place_id,
+                CheckIn.place_id == place_id,
                 CheckIn.is_active == True,
                 CheckIn.last_seen_at >= expiry_time
             )
@@ -374,14 +377,14 @@ async def get_venue_checkin_count(
     count = result.scalar() or 0
 
     return VenueCheckInCountResponse(
-        google_place_id=google_place_id,
+        place_id=place_id,
         count=count
     )
 
 
-@router.get("/venue/{google_place_id}/attendees", response_model=VenueAttendeesResponse)
+@router.get("/venue/{place_id}/attendees", response_model=VenueAttendeesResponse)
 async def get_venue_attendees(
-    google_place_id: str,
+    place_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
@@ -396,7 +399,7 @@ async def get_venue_attendees(
     count_result = await db.execute(
         select(func.count(CheckIn.id)).where(
             and_(
-                CheckIn.google_place_id == google_place_id,
+                CheckIn.place_id == place_id,
                 CheckIn.is_active == True,
                 CheckIn.last_seen_at >= expiry_time
             )
@@ -415,7 +418,7 @@ async def get_venue_attendees(
             .join(User, CheckIn.user_id == User.id)
             .where(
                 and_(
-                    CheckIn.google_place_id == google_place_id,
+                    CheckIn.place_id == place_id,
                     CheckIn.is_active == True,
                     CheckIn.last_seen_at >= expiry_time
                 )
@@ -432,16 +435,16 @@ async def get_venue_attendees(
             ))
 
     return VenueAttendeesResponse(
-        google_place_id=google_place_id,
+        place_id=place_id,
         count=count,
         attendees=attendees,
         can_see_details=can_see_details
     )
 
 
-@router.delete("/venue/{google_place_id}")
+@router.delete("/venue/{place_id}")
 async def checkout_from_venue(
-    google_place_id: str,
+    place_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
@@ -452,7 +455,7 @@ async def checkout_from_venue(
         select(CheckIn).where(
             and_(
                 CheckIn.user_id == current_user.id,
-                CheckIn.google_place_id == google_place_id,
+                CheckIn.place_id == place_id,
                 CheckIn.is_active == True
             )
         )

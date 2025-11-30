@@ -35,7 +35,7 @@ class PlacesService:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    async def fetch_place_details_with_photos(self, google_place_id: str) -> Optional[dict]:
+    async def fetch_place_details_with_photos(self, place_id: str) -> Optional[dict]:
         """
         Fetch place details including photo references from Google Places API.
 
@@ -44,7 +44,7 @@ class PlacesService:
         - photos: list of photo references (up to 5)
         """
         params = {
-            "place_id": google_place_id,
+            "place_id": place_id,
             "key": self.api_key,
             "fields": "name,formatted_address,geometry,types,photos"
         }
@@ -56,7 +56,7 @@ class PlacesService:
                     data = await response.json()
 
                     if data.get("status") != "OK":
-                        logger.error(f"Places API error for {google_place_id}: {data.get('status')}")
+                        logger.error(f"Places API error for {place_id}: {data.get('status')}")
                         return None
 
                     result = data.get("result", {})
@@ -101,7 +101,7 @@ class PlacesService:
 
 async def get_place_with_photos(
     db: AsyncSession,
-    google_place_id: str,
+    place_id: str,
     venue_name: str,
     venue_address: Optional[str],
     latitude: float,
@@ -111,28 +111,28 @@ async def get_place_with_photos(
     """
     Get or create a Place record with photos.
 
-    If the place already exists (by google_place_id), increments the appropriate count and returns it.
+    If the place already exists (by place_id), increments the appropriate count and returns it.
     If it doesn't exist, fetches details and photos from Google, stores them, and returns the new Place.
 
     Args:
         db: Database session
-        google_place_id: Google's place_id
+        place_id: Google's place_id
         venue_name: Venue name (fallback if API fails)
         venue_address: Venue address (fallback if API fails)
         latitude: Latitude (fallback if API fails)
         longitude: Longitude (fallback if API fails)
-        source: "bounce" or "post" - determines which count to increment
+        source: "bounce", "post", or "checkin" - determines which count to increment
 
     Returns:
         Place object or None if creation failed
     """
-    if not google_place_id:
-        logger.warning("No google_place_id provided, cannot store place")
+    if not place_id:
+        logger.warning("No place_id provided, cannot store place")
         return None
 
     # Check if place already exists
     result = await db.execute(
-        select(Place).where(Place.google_place_id == google_place_id)
+        select(Place).where(Place.place_id == place_id)
     )
     existing_place = result.scalar_one_or_none()
 
@@ -140,10 +140,10 @@ async def get_place_with_photos(
         # Increment the appropriate count
         if source == "post":
             existing_place.post_count += 1
-            logger.info(f"Place {google_place_id} already exists, post_count now {existing_place.post_count}")
+            logger.info(f"Place {place_id} already exists, post_count now {existing_place.post_count}")
         elif source == "bounce":
             existing_place.bounce_count += 1
-            logger.info(f"Place {google_place_id} already exists, bounce_count now {existing_place.bounce_count}")
+            logger.info(f"Place {place_id} already exists, bounce_count now {existing_place.bounce_count}")
         # checkin source doesn't increment counts - checkins tracked separately
         await db.flush()
         return existing_place
@@ -154,7 +154,7 @@ async def get_place_with_photos(
         return None
 
     service = PlacesService(settings.GOOGLE_MAPS_API_KEY)
-    details = await service.fetch_place_details_with_photos(google_place_id)
+    details = await service.fetch_place_details_with_photos(place_id)
 
     # Set initial counts based on source
     initial_bounce_count = 1 if source == "bounce" else 0
@@ -163,7 +163,7 @@ async def get_place_with_photos(
     if details:
         # Use API data
         place = Place(
-            google_place_id=google_place_id,
+            place_id=place_id,
             name=details["name"],
             address=details["address"],
             latitude=details["latitude"],
@@ -174,9 +174,9 @@ async def get_place_with_photos(
         )
     else:
         # Fallback to provided data if API fails
-        logger.warning(f"Failed to fetch details for {google_place_id}, using fallback data")
+        logger.warning(f"Failed to fetch details for {place_id}, using fallback data")
         place = Place(
-            google_place_id=google_place_id,
+            place_id=place_id,
             name=venue_name,
             address=venue_address,
             latitude=latitude,
@@ -193,7 +193,7 @@ async def get_place_with_photos(
     if details and details.get("photos"):
         for photo_data in details["photos"]:
             photo = GooglePic(
-                place_id=place.id,
+                place_id=place.id,  # This is the FK to places table, stays as place_id
                 photo_reference=photo_data["photo_reference"],
                 photo_url=service.get_photo_url(photo_data["photo_reference"]),
                 width=photo_data.get("width"),
@@ -202,9 +202,9 @@ async def get_place_with_photos(
             )
             db.add(photo)
 
-        logger.info(f"Created place {google_place_id} with {len(details['photos'])} photos")
+        logger.info(f"Created place {place_id} with {len(details['photos'])} photos")
     else:
-        logger.info(f"Created place {google_place_id} without photos")
+        logger.info(f"Created place {place_id} without photos")
 
     await db.flush()
     return place

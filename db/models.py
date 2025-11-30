@@ -81,19 +81,19 @@ class Post(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    place_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
+    places_fk_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
     content = Column(Text, nullable=False)
     media_url = Column(String, nullable=True)
     media_type = Column(String(10), nullable=True)  # 'image', 'video', None for text
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     venue_name = Column(String(255), nullable=True)  # Venue name from MapKit (e.g., "Hooters Miami")
-    google_place_id = Column(String(255), nullable=True, index=True)  # Google Places ID for venue
+    place_id = Column(String(255), nullable=True, index=True)  # Google Places ID for venue
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     # Relationships
     user = relationship("User", back_populates="posts")
-    place = relationship("Place", back_populates="posts")
+    place = relationship("Place", back_populates="posts", foreign_keys=[places_fk_id])
     likes = relationship("Like", back_populates="post", cascade="all, delete-orphan")
 
 
@@ -108,14 +108,14 @@ class CheckIn(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     # Venue check-in fields (Google Places integration)
-    google_place_id = Column(String(255), nullable=True, index=True)
-    place_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
+    place_id = Column(String(255), nullable=True, index=True)  # Google Places ID
+    places_fk_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
     last_seen_at = Column(DateTime(timezone=True), server_default=func.now())
     is_active = Column(Boolean, default=True)
 
     # Relationships
     user = relationship("User", back_populates="check_ins")
-    place = relationship("Place", back_populates="check_ins")
+    place = relationship("Place", back_populates="check_ins", foreign_keys=[places_fk_id])
 
 
 class RefreshToken(Base):
@@ -190,14 +190,14 @@ class Bounce(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    place_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
+    places_fk_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Location (kept for backwards compatibility and quick access)
     venue_name = Column(String(255), nullable=False)
     venue_address = Column(String(500), nullable=True)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
-    google_place_id = Column(String(255), nullable=True, index=True)  # Google's place_id for linking
+    place_id = Column(String(255), nullable=True, index=True)  # Google's place_id for linking
 
     # Timing
     bounce_time = Column(DateTime(timezone=True), nullable=False)
@@ -214,7 +214,7 @@ class Bounce(Base):
 
     # Relationships
     creator = relationship("User", back_populates="bounces_created")
-    place = relationship("Place", back_populates="bounces")
+    place = relationship("Place", back_populates="bounces", foreign_keys=[places_fk_id])
     invites = relationship("BounceInvite", back_populates="bounce", cascade="all, delete-orphan")
     attendees = relationship("BounceAttendee", back_populates="bounce", cascade="all, delete-orphan")
 
@@ -260,7 +260,7 @@ class Place(Base):
     __tablename__ = "places"
 
     id = Column(Integer, primary_key=True, index=True)
-    google_place_id = Column(String(255), unique=True, index=True, nullable=False)
+    place_id = Column(String(255), unique=True, index=True, nullable=False)  # Google Places ID
     name = Column(String(255), nullable=False)
     address = Column(String(500), nullable=True)
     latitude = Column(Float, nullable=False)
