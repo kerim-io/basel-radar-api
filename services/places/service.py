@@ -141,9 +141,10 @@ async def get_place_with_photos(
         if source == "post":
             existing_place.post_count += 1
             logger.info(f"Place {google_place_id} already exists, post_count now {existing_place.post_count}")
-        else:
+        elif source == "bounce":
             existing_place.bounce_count += 1
             logger.info(f"Place {google_place_id} already exists, bounce_count now {existing_place.bounce_count}")
+        # checkin source doesn't increment counts - checkins tracked separately
         await db.flush()
         return existing_place
 

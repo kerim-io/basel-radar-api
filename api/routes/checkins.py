@@ -225,9 +225,12 @@ async def get_venues_with_checkins_in_area(
                 for pic in pics_result.scalars().all():
                     photos.append({"url": pic.photo_url or pic.photo_reference})
 
+            # Prefer Place name over CheckIn location_name
+            venue_name = (place.name if place else None) or row.location_name or "Unknown Venue"
+
             venues.append(VenueWithCheckInsResponse(
                 google_place_id=row.google_place_id,
-                name=row.location_name or (place.name if place else "Unknown Venue"),
+                name=venue_name,
                 address=place.address if place else None,
                 latitude=row.latitude,
                 longitude=row.longitude,
@@ -251,7 +254,15 @@ async def checkin_to_venue(
     User must be within 100m of the venue location.
     """
     # Get or create the Place record
-    place = await get_place_with_photos(db, google_place_id, source="checkin")
+    place = await get_place_with_photos(
+        db=db,
+        google_place_id=google_place_id,
+        venue_name="",  # Will be fetched from Google API
+        venue_address=None,
+        latitude=lat,  # User's location as fallback
+        longitude=lng,
+        source="checkin"
+    )
 
     if not place:
         raise HTTPException(status_code=404, detail="Place not found")
