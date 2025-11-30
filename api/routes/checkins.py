@@ -179,12 +179,11 @@ async def get_venues_with_checkins_in_area(
     Get all venues with active check-ins within a radius.
     Returns venues with their check-in counts for map display.
     """
-    from sqlalchemy.orm import outerjoin
+    from db.models import GooglePic
 
     expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
 
     # Get all active check-ins grouped by google_place_id
-    # Use LEFT JOIN since place_id might be NULL
     result = await db.execute(
         select(
             CheckIn.google_place_id,
@@ -213,14 +212,27 @@ async def get_venues_with_checkins_in_area(
         # Filter by distance using haversine
         distance = haversine_distance(lat, lng, row.latitude, row.longitude)
         if distance <= radius:
+            # Try to get photos from Place table
+            photos = []
+            place_result = await db.execute(
+                select(Place).where(Place.google_place_id == row.google_place_id)
+            )
+            place = place_result.scalar_one_or_none()
+            if place:
+                pics_result = await db.execute(
+                    select(GooglePic).where(GooglePic.place_id == place.id).limit(3)
+                )
+                for pic in pics_result.scalars().all():
+                    photos.append({"url": pic.photo_url or pic.photo_reference})
+
             venues.append(VenueWithCheckInsResponse(
                 google_place_id=row.google_place_id,
-                name=row.location_name or "Unknown Venue",
-                address=None,
+                name=row.location_name or (place.name if place else "Unknown Venue"),
+                address=place.address if place else None,
                 latitude=row.latitude,
                 longitude=row.longitude,
                 checkin_count=row.checkin_count,
-                photos=[]
+                photos=photos
             ))
 
     return VenuesWithCheckInsResponse(venues=venues)
