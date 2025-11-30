@@ -16,7 +16,7 @@ router = APIRouter(prefix="/checkins", tags=["checkins"])
 
 # Constants
 CHECKIN_PROXIMITY_METERS = 100  # Must be within 100m to check in
-CHECKIN_EXPIRY_MINUTES = 15  # Check-ins expire after 15 minutes of inactivity
+CHECKIN_EXPIRY_HOURS = 24  # Check-ins expire after 24 hours of inactivity
 
 
 def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -179,31 +179,32 @@ async def get_venues_with_checkins_in_area(
     Get all venues with active check-ins within a radius.
     Returns venues with their check-in counts for map display.
     """
-    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=CHECKIN_EXPIRY_MINUTES)
+    from sqlalchemy.orm import outerjoin
 
-    # Get all active check-ins grouped by place
+    expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
+
+    # Get all active check-ins grouped by google_place_id
+    # Use LEFT JOIN since place_id might be NULL
     result = await db.execute(
         select(
             CheckIn.google_place_id,
-            Place.name,
-            Place.address,
-            Place.latitude,
-            Place.longitude,
+            CheckIn.location_name,
+            CheckIn.latitude,
+            CheckIn.longitude,
             func.count(CheckIn.id).label('checkin_count')
         )
-        .join(Place, CheckIn.place_id == Place.id)
         .where(
             and_(
                 CheckIn.is_active == True,
-                CheckIn.last_seen_at >= expiry_time
+                CheckIn.last_seen_at >= expiry_time,
+                CheckIn.google_place_id.isnot(None)
             )
         )
         .group_by(
             CheckIn.google_place_id,
-            Place.name,
-            Place.address,
-            Place.latitude,
-            Place.longitude
+            CheckIn.location_name,
+            CheckIn.latitude,
+            CheckIn.longitude
         )
     )
 
@@ -214,8 +215,8 @@ async def get_venues_with_checkins_in_area(
         if distance <= radius:
             venues.append(VenueWithCheckInsResponse(
                 google_place_id=row.google_place_id,
-                name=row.name or "Unknown Venue",
-                address=row.address,
+                name=row.location_name or "Unknown Venue",
+                address=None,
                 latitude=row.latitude,
                 longitude=row.longitude,
                 checkin_count=row.checkin_count,
@@ -252,7 +253,7 @@ async def checkin_to_venue(
         )
 
     # Check for existing active check-in at this venue
-    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=CHECKIN_EXPIRY_MINUTES)
+    expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
     existing_checkin = await db.execute(
         select(CheckIn).where(
             and_(
@@ -336,7 +337,7 @@ async def get_venue_checkin_count(
     Get count of people checked in at venue (public, no auth required).
     Only counts check-ins within the last 15 minutes.
     """
-    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=CHECKIN_EXPIRY_MINUTES)
+    expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
 
     result = await db.execute(
         select(func.count(CheckIn.id)).where(
@@ -366,7 +367,7 @@ async def get_venue_attendees(
     Returns attendee details only if user is part of an active bounce at this venue.
     Otherwise, returns just the count.
     """
-    expiry_time = datetime.now(timezone.utc) - timedelta(minutes=CHECKIN_EXPIRY_MINUTES)
+    expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
 
     # Get count of active check-ins
     count_result = await db.execute(
