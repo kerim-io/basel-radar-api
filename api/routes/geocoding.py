@@ -136,6 +136,10 @@ class PlacePrediction(BaseModel):
     name: str  # Main text (e.g., "Wynwood Walls")
     address: str  # Secondary text (e.g., "Miami, FL, USA")
     full_description: str  # Combined description
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    distance_meters: Optional[int] = None  # Distance from user in meters
+    photo_url: Optional[str] = None  # First photo URL
 
 
 class PlacePhoto(BaseModel):
@@ -169,6 +173,65 @@ def get_ssl_context():
     return ssl.create_default_context(cafile=certifi.where())
 
 
+import math
+import asyncio
+
+def haversine_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
+    """Calculate distance between two points in meters using Haversine formula"""
+    R = 6371000  # Earth's radius in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    return int(R * c)
+
+
+async def fetch_place_details_for_autocomplete(
+    session: aiohttp.ClientSession,
+    place_id: str,
+    ssl_ctx,
+    api_key: str
+) -> tuple[Optional[float], Optional[float], Optional[str]]:
+    """Fetch coordinates and first photo for a place. Returns (lat, lng, photo_url)"""
+    params = {
+        "place_id": place_id,
+        "key": api_key,
+        "fields": "geometry,photos"  # Only fetch what we need
+    }
+
+    try:
+        async with session.get(GOOGLE_PLACES_DETAILS_URL, params=params, ssl=ssl_ctx) as response:
+            data = await response.json()
+
+            if data.get("status") != "OK":
+                return None, None, None
+
+            result = data.get("result", {})
+            location = result.get("geometry", {}).get("location", {})
+            lat = location.get("lat")
+            lng = location.get("lng")
+
+            # Get first photo URL
+            photo_url = None
+            photos = result.get("photos", [])
+            if photos:
+                photo_ref = photos[0].get("photo_reference")
+                if photo_ref:
+                    photo_url = (
+                        f"https://maps.googleapis.com/maps/api/place/photo"
+                        f"?maxwidth=100"  # Small thumbnail for list
+                        f"&photo_reference={photo_ref}"
+                        f"&key={api_key}"
+                    )
+
+            return lat, lng, photo_url
+    except Exception:
+        return None, None, None
+
+
 @router.get("/places/autocomplete", response_model=AutocompleteResponse)
 async def places_autocomplete(
     query: str = Query(..., min_length=2, description="Search query"),
@@ -179,9 +242,10 @@ async def places_autocomplete(
     """
     Google Places Autocomplete for venue search.
 
-    Returns place predictions as user types. Use with debounce on client (300-500ms).
+    Returns place predictions with coordinates, distance, and photo.
+    Results are sorted by distance (closest first) when lat/lng provided.
 
-    Example: /geocoding/places/autocomplete?query=wynwood&lat=25.79&lng=-80.13
+    Example: /geocoding/places/autocomplete?query=hooters&lat=25.79&lng=-80.13
     """
     if not settings.GOOGLE_MAPS_API_KEY:
         raise HTTPException(
@@ -203,6 +267,7 @@ async def places_autocomplete(
     try:
         ssl_ctx = get_ssl_context()
         async with aiohttp.ClientSession() as session:
+            # First, get autocomplete predictions
             async with session.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=params, ssl=ssl_ctx) as response:
                 data = await response.json()
 
@@ -212,15 +277,43 @@ async def places_autocomplete(
                         detail=f"Places API error: {data.get('status')}"
                     )
 
+                raw_predictions = data.get("predictions", [])
+
+                if not raw_predictions:
+                    return AutocompleteResponse(predictions=[])
+
+                # Fetch details for all predictions in parallel
+                detail_tasks = [
+                    fetch_place_details_for_autocomplete(
+                        session, pred["place_id"], ssl_ctx, settings.GOOGLE_MAPS_API_KEY
+                    )
+                    for pred in raw_predictions
+                ]
+                details_results = await asyncio.gather(*detail_tasks)
+
+                # Build predictions with coordinates and distance
                 predictions = []
-                for pred in data.get("predictions", []):
+                for pred, (place_lat, place_lng, photo_url) in zip(raw_predictions, details_results):
                     structured = pred.get("structured_formatting", {})
+
+                    # Calculate distance if we have both user location and place location
+                    distance_meters = None
+                    if lat is not None and lng is not None and place_lat is not None and place_lng is not None:
+                        distance_meters = haversine_distance_meters(lat, lng, place_lat, place_lng)
+
                     predictions.append(PlacePrediction(
                         place_id=pred["place_id"],
                         name=structured.get("main_text", pred.get("description", "")),
                         address=structured.get("secondary_text", ""),
-                        full_description=pred.get("description", "")
+                        full_description=pred.get("description", ""),
+                        latitude=place_lat,
+                        longitude=place_lng,
+                        distance_meters=distance_meters,
+                        photo_url=photo_url
                     ))
+
+                # Sort by distance (closest first) if distances are available
+                predictions.sort(key=lambda p: p.distance_meters if p.distance_meters is not None else float('inf'))
 
                 return AutocompleteResponse(predictions=predictions)
 
