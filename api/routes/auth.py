@@ -112,6 +112,12 @@ async def apple_signin(
         user.refresh_token = apple_data.get("refresh_token")
         await db.commit()
 
+        # Refresh user to ensure has_profile property has fresh data
+        await db.refresh(user)
+
+        print(f"✅ Auth response: user_id={user.id}, has_profile={user.has_profile}")
+        print(f"   first_name={user.first_name}, last_name={user.last_name}, nickname={user.nickname}")
+
         return AuthResponse(
             access_token=access_token,
             refresh_token=refresh_token_str,
