@@ -195,12 +195,11 @@ async def get_venues_with_checkins_in_area(
     expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
 
     # Get all active check-ins grouped by place_id
+    # Note: latitude/longitude in CheckIn are USER locations, not venue locations
+    # So we only group by place_id and get venue coords from Place table
     result = await db.execute(
         select(
             CheckIn.place_id,
-            CheckIn.location_name,
-            CheckIn.latitude,
-            CheckIn.longitude,
             func.count(CheckIn.id).label('checkin_count')
         )
         .where(
@@ -210,41 +209,43 @@ async def get_venues_with_checkins_in_area(
                 CheckIn.place_id.isnot(None)
             )
         )
-        .group_by(
-            CheckIn.place_id,
-            CheckIn.location_name,
-            CheckIn.latitude,
-            CheckIn.longitude
-        )
+        .group_by(CheckIn.place_id)
     )
 
     venues = []
-    for row in result.all():
-        # Filter by distance using haversine
-        distance = haversine_distance(lat, lng, row.latitude, row.longitude)
-        if distance <= radius:
-            # Try to get photos from Place table
-            photos = []
-            place_result = await db.execute(
-                select(Place).where(Place.place_id == row.place_id)
-            )
-            place = place_result.scalar_one_or_none()
-            if place:
-                pics_result = await db.execute(
-                    select(GooglePic).where(GooglePic.place_id == place.id).limit(3)
-                )
-                for pic in pics_result.scalars().all():
-                    photos.append({"url": pic.photo_url or pic.photo_reference})
+    rows = result.all()
+    print(f"📊 Found {len(rows)} place_ids with active check-ins")
+    for row in rows:
+        print(f"   - place_id={row.place_id}, count={row.checkin_count}")
 
-            # Prefer Place name over CheckIn location_name
-            venue_name = (place.name if place else None) or row.location_name or "Unknown Venue"
+        # Get place info from Place table (required for accurate coordinates)
+        place_result = await db.execute(
+            select(Place).where(Place.place_id == row.place_id)
+        )
+        place = place_result.scalar_one_or_none()
+
+        if not place:
+            # Skip if no Place record exists (shouldn't happen normally)
+            print(f"⚠️ No Place record for place_id: {row.place_id}")
+            continue
+
+        # Filter by distance using venue coordinates from Place table
+        distance = haversine_distance(lat, lng, place.latitude, place.longitude)
+        if distance <= radius:
+            # Get photos
+            photos = []
+            pics_result = await db.execute(
+                select(GooglePic).where(GooglePic.place_id == place.id).limit(3)
+            )
+            for pic in pics_result.scalars().all():
+                photos.append({"url": pic.photo_url or pic.photo_reference})
 
             venues.append(VenueWithCheckInsResponse(
                 place_id=row.place_id,
-                name=venue_name,
-                address=place.address if place else None,
-                latitude=row.latitude,
-                longitude=row.longitude,
+                name=place.name,
+                address=place.address,
+                latitude=place.latitude,
+                longitude=place.longitude,
                 checkin_count=row.checkin_count,
                 photos=photos
             ))
