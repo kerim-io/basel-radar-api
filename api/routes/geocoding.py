@@ -174,6 +174,8 @@ VENUE_TYPES = [
     "bar",
     "cafe",
     "night_club",
+    "hotel",
+    "lodging",
 ]
 
 # SSL context for aiohttp requests to Google APIs
