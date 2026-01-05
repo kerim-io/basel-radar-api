@@ -59,8 +59,8 @@ class User(Base):
 
     @property
     def has_profile(self) -> bool:
-        """Check if user has completed profile setup"""
-        return bool(self.first_name and self.last_name and self.nickname)
+        """Check if user has completed profile setup (nickname required)"""
+        return bool(self.nickname)
 
 
 class Follow(Base):
