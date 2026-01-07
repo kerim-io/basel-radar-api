@@ -129,14 +129,14 @@ async def notifications_websocket(
     """
     WebSocket endpoint for real-time in-app notifications.
     """
-    import jwt
-    from core.config import settings
+    from services.auth_service import decode_access_token
+    from jose import JWTError
 
-    # Validate token and get user_id
+    # Validate token and get user_id (ensures it's an access token, not refresh)
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = decode_access_token(token)
         user_id = int(payload.get("sub"))
-    except Exception as e:
+    except (JWTError, ValueError, TypeError) as e:
         logger.warning(f"WebSocket auth failed: {e}")
         await websocket.close(code=4001, reason="Invalid token")
         return

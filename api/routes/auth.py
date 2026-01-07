@@ -1,20 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from db.database import get_async_session
 from db.models import User, RefreshToken
-from services.auth_service import create_access_token, create_refresh_token, decode_token
+from services.auth_service import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    decode_refresh_token,
+    TOKEN_TYPE_REFRESH
+)
 from services.apple_auth import verify_apple_token
 from core.config import settings
-from api.dependencies import limiter
+from api.dependencies import limiter, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-PASSCODE = "ARTBASEL2024"
 
 
 class AppleAuthRequest(BaseModel):
@@ -103,11 +107,11 @@ async def apple_signin(
         access_token = create_access_token({"sub": str(user.id)})
         refresh_token_str = create_refresh_token({"sub": str(user.id)})
 
-        # Store refresh token
+        # Store refresh token with timezone-aware datetime
         refresh_token_obj = RefreshToken(
             user_id=user.id,
             token=refresh_token_str,
-            expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
         db.add(refresh_token_obj)
 
@@ -144,15 +148,15 @@ async def passcode_auth(
     auth_request: PasscodeAuthRequest,
     db: AsyncSession = Depends(get_async_session)
 ):
-    """Auth with passcode fallback (ARTBASEL2024)"""
-    if auth_request.passcode != PASSCODE:
+    """Auth with passcode fallback"""
+    if auth_request.passcode != settings.AUTH_PASSCODE:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid passcode"
         )
 
     # Create/get guest user
-    username = auth_request.username or f"guest_{datetime.utcnow().timestamp()}"
+    username = auth_request.username or f"guest_{datetime.now(timezone.utc).timestamp()}"
     guest_id = f"passcode_{username}"
 
     result = await db.execute(
@@ -182,81 +186,51 @@ async def passcode_auth(
     )
 
 
-@router.get("/debug/{user_id}")
-async def debug_user(
-    user_id: int,
+@router.post("/logout")
+@limiter.limit("10/minute")
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
-    """Debug endpoint to check user profile data"""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        return {"error": "User not found"}
-    return {
-        "id": user.id,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "nickname": user.nickname,
-        "email": user.email,
-        "has_profile": user.has_profile
-    }
+    """
+    Logout user and revoke all their refresh tokens.
 
-
-@router.post("/fix-profile/{user_id}")
-async def fix_user_profile(
-    user_id: int,
-    nickname: str,
-    first_name: str = None,
-    last_name: str = None,
-    db: AsyncSession = Depends(get_async_session)
-):
-    """Admin endpoint to fix user profile data"""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if nickname:
-        user.nickname = nickname
-    if first_name:
-        user.first_name = first_name
-    if last_name:
-        user.last_name = last_name
-
+    This invalidates all sessions for the user, requiring re-authentication.
+    """
+    # Delete all refresh tokens for this user
+    await db.execute(
+        delete(RefreshToken).where(RefreshToken.user_id == current_user.id)
+    )
     await db.commit()
-    await db.refresh(user)
 
-    return {
-        "success": True,
-        "id": user.id,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "nickname": user.nickname,
-        "has_profile": user.has_profile
-    }
+    return {"message": "Successfully logged out"}
 
 
 @router.post("/refresh", response_model=AuthResponse)
+@limiter.limit("30/minute")
 async def refresh_token_endpoint(
-    request: RefreshTokenRequest,
+    request_obj: Request,
+    refresh_request: RefreshTokenRequest,
     db: AsyncSession = Depends(get_async_session)
 ):
     """
     Refresh access token using refresh_token.
 
     iOS should call this when access_token expires (401 error).
+    Implements refresh token rotation for enhanced security.
     """
     try:
-        # Verify refresh token is valid and not expired
-        payload = decode_token(request.refresh_token)
+        # Verify refresh token is valid and has correct type
+        payload = decode_refresh_token(refresh_request.refresh_token)
         user_id = int(payload.get("sub"))
 
         # Check if refresh token exists in database and isn't expired
         result = await db.execute(
             select(RefreshToken).where(
-                RefreshToken.token == request.refresh_token,
+                RefreshToken.token == refresh_request.refresh_token,
                 RefreshToken.user_id == user_id,
-                RefreshToken.expires_at > datetime.utcnow()
+                RefreshToken.expires_at > datetime.now(timezone.utc)
             )
         )
         refresh_token_obj = result.scalar_one_or_none()
@@ -267,19 +241,43 @@ async def refresh_token_endpoint(
                 detail="Invalid or expired refresh token"
             )
 
-        # Get user
+        # Get user and verify they're still active
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
 
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Create new access token (keep same refresh token)
+        if not user.is_active:
+            # Revoke all tokens for inactive user
+            await db.execute(
+                delete(RefreshToken).where(RefreshToken.user_id == user_id)
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is deactivated"
+            )
+
+        # Create new access token
         access_token = create_access_token({"sub": str(user.id)})
+
+        # Rotate refresh token: create new one, delete old one
+        new_refresh_token = create_refresh_token({"sub": str(user.id)})
+        new_refresh_token_obj = RefreshToken(
+            user_id=user.id,
+            token=new_refresh_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+
+        # Delete old refresh token and add new one
+        await db.delete(refresh_token_obj)
+        db.add(new_refresh_token_obj)
+        await db.commit()
 
         return AuthResponse(
             access_token=access_token,
-            refresh_token=request.refresh_token,  # Return same refresh token
+            refresh_token=new_refresh_token,  # Return rotated refresh token
             token_type="bearer",
             user_id=user.id,
             email=user.email,

@@ -11,8 +11,11 @@ class Settings:
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-this-secret-key-in-production")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
-    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "365"))  # 1 year
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15 minutes (production-safe)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))  # 30 days
+
+    # Auth passcode (for development/testing)
+    AUTH_PASSCODE: str = os.getenv("AUTH_PASSCODE", "ARTBASEL2024")
 
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads")
     MAX_FILE_SIZE: int = int(os.getenv("MAX_FILE_SIZE", str(10 * 1024 * 1024)))
