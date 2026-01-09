@@ -11,8 +11,8 @@ class Settings:
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-this-secret-key-in-production")
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15 minutes (production-safe)
-    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))  # 30 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))  # 1 hour
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "3650"))  # 10 years - never expire unless explicit logout
 
     # Auth passcode (for development/testing)
     AUTH_PASSCODE: str = os.getenv("AUTH_PASSCODE", "ARTBASEL2024")
