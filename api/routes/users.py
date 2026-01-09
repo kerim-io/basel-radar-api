@@ -61,17 +61,17 @@ class UserUpdate(BaseModel):
 
 
 class ProfileResponse(BaseModel):
+    """Unified profile response for both own profile and viewing others"""
     id: int
-    first_name: Optional[str]
-    last_name: Optional[str]
-    nickname: Optional[str]
-    employer: Optional[str]
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    nickname: Optional[str] = None
+    employer: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-    profile_picture: Optional[str]
-    instagram_handle: Optional[str] = None
-    has_profile: bool
-    # Privacy flags (only shown to owner)
+    profile_picture: Optional[str] = None
+    has_profile: bool = False
+    # Privacy flags (only returned for own profile)
     phone_visible: Optional[bool] = None
     email_visible: Optional[bool] = None
     # Social handles
@@ -82,6 +82,10 @@ class ProfileResponse(BaseModel):
     posts_count: int = 0
     followers_count: int = 0
     following_count: int = 0
+    # Relationship state (only returned when viewing others)
+    is_followed_by_current_user: Optional[bool] = None
+    is_close_friend: Optional[bool] = None
+    is_mutual: Optional[bool] = None
 
     class Config:
         from_attributes = True
@@ -107,33 +111,6 @@ class SimpleUserResponse(BaseModel):
     profile_picture: Optional[str]
     employer: Optional[str]
     instagram_handle: Optional[str] = None
-    is_close_friend: bool = False
-    is_mutual: bool = False
-
-    class Config:
-        from_attributes = True
-
-
-class PublicProfileResponse(BaseModel):
-    """Public profile response with stats for viewing other users"""
-    id: int
-    first_name: Optional[str]
-    last_name: Optional[str]
-    nickname: Optional[str]
-    employer: Optional[str]
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    profile_picture: Optional[str]
-    has_profile: bool
-    # Instagram social
-    instagram_handle: Optional[str] = None
-    instagram_profile_pic: Optional[str] = None
-    # Stats
-    posts_count: int
-    followers_count: int
-    following_count: int
-    # Follow state for current user
-    is_followed_by_current_user: bool
     is_close_friend: bool = False
     is_mutual: bool = False
 
@@ -933,7 +910,7 @@ async def get_user_followers(
     ]
 
 
-@router.get("/{user_id}/profile", response_model=PublicProfileResponse)
+@router.get("/{user_id}/profile", response_model=ProfileResponse)
 async def get_user_profile(
     user_id: int,
     db: AsyncSession = Depends(get_async_session),
@@ -995,7 +972,7 @@ async def get_user_profile(
     # Conditional privacy: only show phone/email to geolocated users
     can_see_private = current_user.can_post  # Geolocated at Art Basel Miami
 
-    return PublicProfileResponse(
+    return ProfileResponse(
         id=user.id,
         first_name=user.first_name,
         last_name=user.last_name,
