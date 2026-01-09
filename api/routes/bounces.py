@@ -731,6 +731,11 @@ class InvitedUserInfo(BaseModel):
     last_name: Optional[str]
     profile_picture: Optional[str]
     invited_at: datetime
+    is_checked_in: bool = False
+
+
+# Constants for check-in status
+CHECKIN_EXPIRY_HOURS = 24
 
 
 @router.get("/{bounce_id}/invites")
@@ -741,12 +746,15 @@ async def get_bounce_invites(
 ):
     """
     Get list of users invited to a bounce.
+    Includes is_checked_in status if the invited user is currently checked in at the bounce's venue.
 
     Only accessible by:
     - The bounce creator
     - Users who are invited to the bounce
     - Anyone if the bounce is public
     """
+    from db.models import CheckIn
+
     # Get the bounce
     result = await db.execute(
         select(Bounce).where(Bounce.id == bounce_id)
@@ -781,6 +789,21 @@ async def get_bounce_invites(
     result = await db.execute(stmt)
     rows = result.all()
 
+    # Get users checked in at the bounce's venue (if place_id exists)
+    checked_in_user_ids = set()
+    if bounce.place_id:
+        expiry_time = datetime.now(timezone.utc) - timedelta(hours=CHECKIN_EXPIRY_HOURS)
+        checkin_result = await db.execute(
+            select(CheckIn.user_id).where(
+                and_(
+                    CheckIn.place_id == bounce.place_id,
+                    CheckIn.is_active == True,
+                    CheckIn.last_seen_at >= expiry_time
+                )
+            )
+        )
+        checked_in_user_ids = {row[0] for row in checkin_result.all()}
+
     invites = [
         InvitedUserInfo(
             user_id=user.id,
@@ -788,7 +811,8 @@ async def get_bounce_invites(
             first_name=user.first_name,
             last_name=user.last_name,
             profile_picture=user.profile_picture,
-            invited_at=invite.created_at
+            invited_at=invite.created_at,
+            is_checked_in=user.id in checked_in_user_ids
         )
         for invite, user in rows
     ]
