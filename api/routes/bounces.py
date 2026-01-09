@@ -12,6 +12,7 @@ from api.dependencies import get_current_user
 from services.geofence import haversine_distance
 from services.places import get_place_with_photos
 from api.routes.websocket import manager
+from services.apns_service import get_apns_service, NotificationPayload, NotificationType
 
 router = APIRouter(prefix="/bounces", tags=["bounces"])
 logger = logging.getLogger(__name__)
@@ -221,23 +222,21 @@ async def create_bounce(
                         except Exception:
                             pass
 
-        # Send in-app notification to each invited user
+        # Send push notification to each invited user
+        apns = await get_apns_service()
         for user_id in invited_ids:
-            await manager.send_to_user(user_id, {
-                "type": "notification",
-                "notification_type": "bounce_invite",
-                "message": f"{current_user.nickname or current_user.first_name} invited you to bounce at {bounce.venue_name}",
-                "actor": {
-                    "user_id": current_user.id,
-                    "nickname": current_user.nickname,
-                    "profile_picture": current_user.profile_picture
-                },
-                "bounce": {
-                    "id": bounce.id,
-                    "venue_name": bounce.venue_name,
-                    "place_id": bounce.place_id
-                }
-            })
+            payload = NotificationPayload(
+                notification_type=NotificationType.BOUNCE_INVITE,
+                title="Bounce Invite",
+                body=f"{current_user.nickname or current_user.first_name} invited you to bounce at {bounce.venue_name}",
+                actor_id=current_user.id,
+                actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+                actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
+                bounce_id=bounce.id,
+                bounce_venue_name=bounce.venue_name,
+                bounce_place_id=bounce.place_id
+            )
+            await apns.send_notification(db, user_id, payload)
 
         return bounce_response
 
@@ -706,23 +705,21 @@ async def invite_to_bounce(
 
     logger.info(f"Added {added} invites to bounce {bounce_id}")
 
-    # Send in-app notification to each newly invited user
+    # Send push notification to each newly invited user
+    apns = await get_apns_service()
     for user_id in newly_invited:
-        await manager.send_to_user(user_id, {
-            "type": "notification",
-            "notification_type": "bounce_invite",
-            "message": f"{current_user.nickname or current_user.first_name} invited you to bounce at {bounce.venue_name}",
-            "actor": {
-                "user_id": current_user.id,
-                "nickname": current_user.nickname,
-                "profile_picture": current_user.profile_picture
-            },
-            "bounce": {
-                "id": bounce.id,
-                "venue_name": bounce.venue_name,
-                "place_id": bounce.place_id
-            }
-        })
+        payload = NotificationPayload(
+            notification_type=NotificationType.BOUNCE_INVITE,
+            title="Bounce Invite",
+            body=f"{current_user.nickname or current_user.first_name} invited you to bounce at {bounce.venue_name}",
+            actor_id=current_user.id,
+            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
+            bounce_id=bounce.id,
+            bounce_venue_name=bounce.venue_name,
+            bounce_place_id=bounce.place_id
+        )
+        await apns.send_notification(db, user_id, payload)
 
     return {"added": added, "total": len(existing_user_ids) + added}
 

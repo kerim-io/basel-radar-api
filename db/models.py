@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -75,6 +75,46 @@ class Follow(Base):
     # Relationships
     follower = relationship("User", foreign_keys=[follower_id], back_populates="following")
     following = relationship("User", foreign_keys=[following_id], back_populates="followers")
+
+
+class DeviceToken(Base):
+    """Store APNs device tokens for push notifications"""
+    __tablename__ = "device_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_token = Column(String(255), nullable=False)
+    device_name = Column(String(100), nullable=True)
+    platform = Column(String(20), default='ios')
+    is_sandbox = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+
+    user = relationship("User", backref="device_tokens")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'device_token', name='uq_user_device_token'),
+    )
+
+
+class NotificationPreference(Base):
+    """User notification preferences for push notifications"""
+    __tablename__ = "notification_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    bounce_invites = Column(Boolean, default=True)
+    new_followers = Column(Boolean, default=True)
+    follow_backs = Column(Boolean, default=True)
+    friends_at_same_venue = Column(Boolean, default=True)
+    friends_leaving_venue = Column(Boolean, default=True)
+    close_friend_checkins = Column(Boolean, default=True)
+    push_enabled = Column(Boolean, default=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship("User", backref="notification_preferences")
 
 
 class Post(Base):

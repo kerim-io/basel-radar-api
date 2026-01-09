@@ -702,35 +702,32 @@ async def follow_user(
     db.add(follow)
     await db.commit()
 
-    # Determine notification type based on follow-back status
-    if is_follow_back:
-        # Send follow-back notification to the target user
-        notification_payload = {
-            "type": "notification",
-            "notification_type": "follow_back",
-            "message": f"{current_user.nickname or current_user.first_name} followed you back",
-            "actor": {
-                "user_id": current_user.id,
-                "nickname": current_user.nickname,
-                "profile_picture": current_user.profile_picture or current_user.instagram_profile_pic
-            }
-        }
-    else:
-        # Send regular new follower notification
-        notification_payload = {
-            "type": "notification",
-            "notification_type": "new_follower",
-            "message": f"{current_user.nickname or current_user.first_name} started following you",
-            "actor": {
-                "user_id": current_user.id,
-                "nickname": current_user.nickname,
-                "profile_picture": current_user.profile_picture or current_user.instagram_profile_pic
-            }
-        }
+    # Send push notification
+    from services.apns_service import get_apns_service, NotificationPayload, NotificationType
 
-    logger.info(f"Sending follow notification to user {user_id}: {notification_payload}")
-    sent = await ws_manager.send_to_user(user_id, notification_payload)
-    logger.info(f"Follow notification sent to user {user_id}: {sent} (user connected: {user_id in ws_manager.active_connections})")
+    apns = await get_apns_service()
+
+    if is_follow_back:
+        payload = NotificationPayload(
+            notification_type=NotificationType.FOLLOW_BACK,
+            title="New Follow Back",
+            body=f"{current_user.nickname or current_user.first_name} followed you back",
+            actor_id=current_user.id,
+            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
+        )
+    else:
+        payload = NotificationPayload(
+            notification_type=NotificationType.NEW_FOLLOWER,
+            title="New Follower",
+            body=f"{current_user.nickname or current_user.first_name} started following you",
+            actor_id=current_user.id,
+            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
+        )
+
+    sent = await apns.send_notification(db, user_id, payload)
+    logger.info(f"Push notification sent to user {user_id}: {sent}")
 
     return {"status": "success", "is_mutual": is_follow_back}
 

@@ -12,6 +12,7 @@ from api.dependencies import get_current_user
 from services.geofence import is_in_basel_area
 from services.places.service import get_place_with_photos
 from api.routes.websocket import manager
+from services.apns_service import get_apns_service, NotificationPayload, NotificationType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -386,30 +387,25 @@ async def checkin_to_venue(
         )
     )
 
-    actor_info = {
-        "user_id": current_user.id,
-        "nickname": current_user.nickname,
-        "profile_picture": current_user.profile_picture or current_user.instagram_profile_pic
-    }
-
-    venue_info = {
-        "place_id": place_id,
-        "venue_name": place.name,
-        "latitude": place.latitude,
-        "longitude": place.longitude
-    }
+    # Send push notifications using APNs
+    apns = await get_apns_service()
 
     # Notify users at the same venue
     for user, _ in same_venue_followers_result.all():
-        notification_payload = {
-            "type": "notification",
-            "notification_type": "friend_at_venue",
-            "message": f"{current_user.nickname} just arrived at {place.name}",
-            "actor": actor_info,
-            "venue": venue_info
-        }
-        logger.info(f"Sending friend_at_venue notification to user {user.id}")
-        await manager.send_to_user(user.id, notification_payload)
+        payload = NotificationPayload(
+            notification_type=NotificationType.FRIEND_AT_VENUE,
+            title="Friend Arrived",
+            body=f"{current_user.nickname} just arrived at {place.name}",
+            actor_id=current_user.id,
+            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
+            venue_place_id=place_id,
+            venue_name=place.name,
+            venue_latitude=place.latitude,
+            venue_longitude=place.longitude
+        )
+        logger.info(f"Sending friend_at_venue push notification to user {user.id}")
+        await apns.send_notification(db, user.id, payload)
 
     # Send notifications to users who have the current user marked as a close friend
     close_friend_followers_result = await db.execute(
@@ -423,15 +419,20 @@ async def checkin_to_venue(
     )
 
     for user in close_friend_followers_result.scalars().all():
-        notification_payload = {
-            "type": "notification",
-            "notification_type": "close_friend_checkin",
-            "message": f"{current_user.nickname} checked into {place.name}",
-            "actor": actor_info,
-            "venue": venue_info
-        }
-        logger.info(f"Sending close_friend_checkin notification to user {user.id}")
-        await manager.send_to_user(user.id, notification_payload)
+        payload = NotificationPayload(
+            notification_type=NotificationType.CLOSE_FRIEND_CHECKIN,
+            title="Close Friend Check-in",
+            body=f"{current_user.nickname} checked into {place.name}",
+            actor_id=current_user.id,
+            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
+            venue_place_id=place_id,
+            venue_name=place.name,
+            venue_latitude=place.latitude,
+            venue_longitude=place.longitude
+        )
+        logger.info(f"Sending close_friend_checkin push notification to user {user.id}")
+        await apns.send_notification(db, user.id, payload)
 
     return VenueCheckInResponse(
         id=checkin.id,
@@ -584,29 +585,23 @@ async def checkout_from_venue(
         )
     )
 
-    actor_info = {
-        "user_id": current_user.id,
-        "nickname": current_user.nickname,
-        "profile_picture": current_user.profile_picture or current_user.instagram_profile_pic
-    }
-
-    venue_info = {
-        "place_id": place_id,
-        "venue_name": venue_name,
-        "latitude": place.latitude if place else None,
-        "longitude": place.longitude if place else None
-    }
-
+    # Send push notifications using APNs
+    apns = await get_apns_service()
     for user, _ in same_venue_followers_result.all():
-        notification_payload = {
-            "type": "notification",
-            "notification_type": "friend_left_venue",
-            "message": f"{current_user.nickname} left {venue_name}",
-            "actor": actor_info,
-            "venue": venue_info
-        }
-        logger.info(f"Sending friend_left_venue notification to user {user.id}")
-        await manager.send_to_user(user.id, notification_payload)
+        payload = NotificationPayload(
+            notification_type=NotificationType.FRIEND_LEFT_VENUE,
+            title="Friend Left",
+            body=f"{current_user.nickname} left {venue_name}",
+            actor_id=current_user.id,
+            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
+            venue_place_id=place_id,
+            venue_name=venue_name,
+            venue_latitude=place.latitude if place else None,
+            venue_longitude=place.longitude if place else None
+        )
+        logger.info(f"Sending friend_left_venue push notification to user {user.id}")
+        await apns.send_notification(db, user.id, payload)
 
     # Broadcast checkout to all connected clients
     await manager.broadcast({

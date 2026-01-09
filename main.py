@@ -9,7 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from db.database import create_db_and_tables
-from api.routes import auth, users, checkins, websocket, likes, geocoding, bounces
+from api.routes import auth, users, checkins, websocket, likes, geocoding, bounces, notifications
 from api.routes.websocket import manager as ws_manager
 from api.dependencies import limiter
 from services.redis import close_redis
@@ -75,6 +75,7 @@ app.include_router(websocket.router)
 app.include_router(likes.router)
 app.include_router(geocoding.router)
 app.include_router(bounces.router)
+app.include_router(notifications.router)
 
 
 @app.get("/")

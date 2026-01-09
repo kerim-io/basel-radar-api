@@ -46,4 +46,12 @@ class Settings:
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+    # APNs (Apple Push Notification Service)
+    # Falls back to APPLE_KEY_BASE64 if APNS_KEY_BASE64 not set
+    APNS_KEY_BASE64: str = os.getenv("APNS_KEY_BASE64", "") or os.getenv("APPLE_KEY_BASE64", "")
+    APNS_KEY_ID: str = os.getenv("APNS_KEY_ID", "")  # Key ID from Apple Developer
+    APNS_TEAM_ID: str = os.getenv("APNS_TEAM_ID", "") or os.getenv("APPLE_TEAM_ID", "")  # Team ID
+    APNS_BUNDLE_ID: str = os.getenv("APNS_BUNDLE_ID", "com.bitbasel.baselradar")  # App bundle ID
+    APNS_USE_SANDBOX: bool = os.getenv("APNS_USE_SANDBOX", "false").lower() == "true"
+
 settings = Settings()
