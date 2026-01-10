@@ -12,8 +12,9 @@ from api.dependencies import get_current_user
 from services.geofence import is_in_basel_area
 from services.places.service import get_place_with_photos
 from api.routes.websocket import manager
-from services.apns_service import get_apns_service, NotificationPayload, NotificationType
+from services.apns_service import NotificationPayload, NotificationType
 from services.cache import cache_get, cache_set, cache_delete
+from services.tasks import enqueue_notification, payload_to_dict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -398,9 +399,7 @@ async def checkin_to_venue(
         )
     )
 
-    # Send push notifications using APNs
-    apns = await get_apns_service()
-
+    # Queue push notifications (non-blocking)
     # Notify users at the same venue
     for user, _ in same_venue_followers_result.all():
         payload = NotificationPayload(
@@ -415,10 +414,10 @@ async def checkin_to_venue(
             venue_latitude=place.latitude,
             venue_longitude=place.longitude
         )
-        logger.info(f"Sending friend_at_venue push notification to user {user.id}")
-        await apns.send_notification(db, user.id, payload)
+        logger.info(f"Queuing friend_at_venue push notification for user {user.id}")
+        enqueue_notification(user.id, payload_to_dict(payload))
 
-    # Send notifications to users who have the current user marked as a close friend
+    # Queue notifications for users who have the current user marked as a close friend
     close_friend_followers_result = await db.execute(
         select(User).join(
             Follow, and_(
@@ -442,8 +441,8 @@ async def checkin_to_venue(
             venue_latitude=place.latitude,
             venue_longitude=place.longitude
         )
-        logger.info(f"Sending close_friend_checkin push notification to user {user.id}")
-        await apns.send_notification(db, user.id, payload)
+        logger.info(f"Queuing close_friend_checkin push notification for user {user.id}")
+        enqueue_notification(user.id, payload_to_dict(payload))
 
     return VenueCheckInResponse(
         id=checkin.id,
@@ -611,8 +610,7 @@ async def checkout_from_venue(
         )
     )
 
-    # Send push notifications using APNs
-    apns = await get_apns_service()
+    # Queue push notifications (non-blocking)
     for user, _ in same_venue_followers_result.all():
         payload = NotificationPayload(
             notification_type=NotificationType.FRIEND_LEFT_VENUE,
@@ -626,8 +624,8 @@ async def checkout_from_venue(
             venue_latitude=place.latitude if place else None,
             venue_longitude=place.longitude if place else None
         )
-        logger.info(f"Sending friend_left_venue push notification to user {user.id}")
-        await apns.send_notification(db, user.id, payload)
+        logger.info(f"Queuing friend_left_venue push notification for user {user.id}")
+        enqueue_notification(user.id, payload_to_dict(payload))
 
     # Broadcast checkout to all connected clients
     await manager.broadcast({
