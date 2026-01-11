@@ -527,6 +527,7 @@ async def _fetch_and_index_google_nearby(
         async with aiohttp.ClientSession() as session:
             async with session.post(GOOGLE_PLACES_NEARBY_URL, headers=headers, json=body, ssl=ssl_ctx) as response:
                 data = await response.json()
+                print(f"🌐 GOOGLE NEARBY RAW RESPONSE: {data}")
 
                 if response.status != 200:
                     return []
@@ -614,18 +615,12 @@ async def places_nearby(
         limit=20
     )
 
-    # Log what we got from cache
-    print(f"🔍 Nearby: type_filter={type_filter}, cached={len(cached_results)}")
-    for p in cached_results[:3]:
-        print(f"   - {p.get('name')}: types={p.get('types', [])}")
-
     # Filter cached results by type if filter specified
     if type_filter and cached_results:
         cached_results = [
             p for p in cached_results
             if any(t in type_filter for t in p.get("types", []))
         ]
-        print(f"🔍 After filter: {len(cached_results)} results")
 
     # 2. If enough results from cache, return them
     if len(cached_results) >= 5:

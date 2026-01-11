@@ -19,12 +19,23 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[int, List[WebSocket]] = {}
         self._subscriber_task: asyncio.Task | None = None
+        self._pubsub = None  # Redis pubsub instance for dynamic subscriptions
 
     async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
-        if user_id not in self.active_connections:
+        is_new_user = user_id not in self.active_connections
+        if is_new_user:
             self.active_connections[user_id] = []
         self.active_connections[user_id].append(websocket)
+
+        # Subscribe to user-specific channel if this is their first connection
+        if is_new_user and self._pubsub is not None:
+            try:
+                channel = REDIS_CHANNEL_USER.format(user_id=user_id)
+                await self._pubsub.subscribe(channel)
+                logger.info(f"Subscribed to Redis channel for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to subscribe to user channel: {e}")
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         if user_id in self.active_connections:
@@ -32,6 +43,18 @@ class ConnectionManager:
                 self.active_connections[user_id].remove(websocket)
             if not self.active_connections[user_id]:
                 del self.active_connections[user_id]
+                # Unsubscribe from user channel when they have no more connections
+                if self._pubsub is not None:
+                    asyncio.create_task(self._unsubscribe_user(user_id))
+
+    async def _unsubscribe_user(self, user_id: int):
+        """Unsubscribe from a user's Redis channel"""
+        try:
+            channel = REDIS_CHANNEL_USER.format(user_id=user_id)
+            await self._pubsub.unsubscribe(channel)
+            logger.info(f"Unsubscribed from Redis channel for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe from user channel: {e}")
 
     async def _send_local(self, message: dict, user_id: int | None = None):
         """Send to local connections only"""
@@ -86,11 +109,14 @@ class ConnectionManager:
             try:
                 redis = await get_redis()
                 pubsub = redis.pubsub()
+                self._pubsub = pubsub  # Store for dynamic subscriptions
 
                 await pubsub.subscribe(REDIS_CHANNEL_BROADCAST)
                 # Subscribe to user-specific channels for connected users
                 for user_id in self.active_connections.keys():
                     await pubsub.subscribe(REDIS_CHANNEL_USER.format(user_id=user_id))
+
+                logger.info(f"Redis subscriber started, subscribed to {len(self.active_connections)} user channels")
 
                 async for msg in pubsub.listen():
                     if msg["type"] != "message":
@@ -99,6 +125,9 @@ class ConnectionManager:
                     try:
                         data = json.loads(msg["data"])
                         channel = msg["channel"]
+
+                        if isinstance(channel, bytes):
+                            channel = channel.decode('utf-8')
 
                         if channel == REDIS_CHANNEL_BROADCAST:
                             await self._send_local(data)
@@ -110,6 +139,7 @@ class ConnectionManager:
 
             except Exception as e:
                 logger.error(f"Redis subscriber error, reconnecting: {e}")
+                self._pubsub = None
                 await asyncio.sleep(1)
 
 

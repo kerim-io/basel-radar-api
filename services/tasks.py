@@ -124,3 +124,48 @@ def payload_to_dict(payload) -> Dict[str, Any]:
         'venue_latitude': payload.venue_latitude,
         'venue_longitude': payload.venue_longitude,
     }
+
+
+async def send_websocket_notification(user_id: int, payload_dict: Dict[str, Any]) -> bool:
+    """
+    Send in-app notification via WebSocket.
+    Call this from the main server process (not from RQ worker).
+    """
+    from api.routes.websocket import manager
+
+    try:
+        ws_message = {
+            "type": "notification",
+            "notification_type": payload_dict['notification_type'],
+            "message": payload_dict['body'],
+            "actor": {
+                "user_id": payload_dict['actor_id'],
+                "nickname": payload_dict['actor_nickname'],
+                "profile_picture": payload_dict.get('actor_profile_picture'),
+            },
+        }
+
+        # Add bounce data if present
+        if payload_dict.get('bounce_id'):
+            ws_message["bounce"] = {
+                "id": payload_dict['bounce_id'],
+                "venue_name": payload_dict.get('bounce_venue_name'),
+                "place_id": payload_dict.get('bounce_place_id'),
+            }
+
+        # Add venue data if present
+        if payload_dict.get('venue_place_id'):
+            ws_message["venue"] = {
+                "place_id": payload_dict['venue_place_id'],
+                "venue_name": payload_dict.get('venue_name'),
+                "latitude": payload_dict.get('venue_latitude'),
+                "longitude": payload_dict.get('venue_longitude'),
+            }
+
+        result = await manager.send_to_user(user_id, ws_message)
+        logger.info(f"WebSocket notification sent to user {user_id}: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to send WebSocket notification to user {user_id}: {e}")
+        return False

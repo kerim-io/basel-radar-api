@@ -419,7 +419,9 @@ async def checkin_to_venue(
         )
     )
 
-    # Queue push notifications (non-blocking)
+    # Send notifications (WebSocket + push)
+    from services.tasks import send_websocket_notification
+
     # Notify users at the same venue
     for user, _ in same_venue_followers_result.all():
         payload = NotificationPayload(
@@ -434,10 +436,12 @@ async def checkin_to_venue(
             venue_latitude=place.latitude,
             venue_longitude=place.longitude
         )
-        logger.info(f"Queuing friend_at_venue push notification for user {user.id}")
-        enqueue_notification(user.id, payload_to_dict(payload))
+        payload_dict = payload_to_dict(payload)
+        await send_websocket_notification(user.id, payload_dict)
+        enqueue_notification(user.id, payload_dict)
+        logger.info(f"Sent friend_at_venue notification for user {user.id}")
 
-    # Queue notifications for users who have the current user marked as a close friend
+    # Notify users who have the current user marked as a close friend
     close_friend_followers_result = await db.execute(
         select(User).join(
             Follow, and_(
@@ -461,8 +465,10 @@ async def checkin_to_venue(
             venue_latitude=place.latitude,
             venue_longitude=place.longitude
         )
-        logger.info(f"Queuing close_friend_checkin push notification for user {user.id}")
-        enqueue_notification(user.id, payload_to_dict(payload))
+        payload_dict = payload_to_dict(payload)
+        await send_websocket_notification(user.id, payload_dict)
+        enqueue_notification(user.id, payload_dict)
+        logger.info(f"Sent close_friend_checkin notification for user {user.id}")
 
     return VenueCheckInResponse(
         id=checkin.id,
@@ -631,7 +637,9 @@ async def checkout_from_venue(
         )
     )
 
-    # Queue push notifications (non-blocking)
+    # Send notifications (WebSocket + push)
+    from services.tasks import send_websocket_notification
+
     for user, _ in same_venue_followers_result.all():
         payload = NotificationPayload(
             notification_type=NotificationType.FRIEND_LEFT_VENUE,
@@ -645,8 +653,10 @@ async def checkout_from_venue(
             venue_latitude=place.latitude if place else None,
             venue_longitude=place.longitude if place else None
         )
-        logger.info(f"Queuing friend_left_venue push notification for user {user.id}")
-        enqueue_notification(user.id, payload_to_dict(payload))
+        payload_dict = payload_to_dict(payload)
+        await send_websocket_notification(user.id, payload_dict)
+        enqueue_notification(user.id, payload_dict)
+        logger.info(f"Sent friend_left_venue notification for user {user.id}")
 
     # Broadcast checkout to all connected clients
     await manager.broadcast({

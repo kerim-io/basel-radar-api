@@ -693,8 +693,9 @@ async def follow_user(
     await cache_delete(f"user_stats:{user_id}")
     await cache_delete(f"user_stats:{current_user.id}")
 
-    # Queue push notification (non-blocking)
+    # Send notification
     from services.apns_service import NotificationPayload, NotificationType
+    from services.tasks import send_websocket_notification
 
     if is_follow_back:
         payload = NotificationPayload(
@@ -715,8 +716,14 @@ async def follow_user(
             actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
         )
 
-    enqueue_notification(user_id, payload_to_dict(payload))
-    logger.info(f"Queued push notification for user {user_id}")
+    payload_dict = payload_to_dict(payload)
+
+    # Send WebSocket notification for in-app display (immediate)
+    await send_websocket_notification(user_id, payload_dict)
+
+    # Queue push notification (background)
+    enqueue_notification(user_id, payload_dict)
+    logger.info(f"Sent notifications for user {user_id}")
 
     return {"status": "success", "is_mutual": is_follow_back}
 

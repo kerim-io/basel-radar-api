@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 import logging
 
 from db.database import get_async_session
-from db.models import Bounce, BounceInvite, BounceAttendee, User, Place, GooglePic
+from db.models import Bounce, BounceInvite, BounceAttendee, BounceLocationShare, User, Place, GooglePic
 from api.dependencies import get_current_user
 from services.geofence import haversine_distance
 from services.places import get_place_with_photos
@@ -224,7 +224,9 @@ async def create_bounce(
                         except Exception:
                             pass
 
-        # Queue push notifications to invited users (non-blocking)
+        # Send notifications to invited users
+        from services.tasks import send_websocket_notification
+
         for user_id in invited_ids:
             payload = NotificationPayload(
                 notification_type=NotificationType.BOUNCE_INVITE,
@@ -237,7 +239,13 @@ async def create_bounce(
                 bounce_venue_name=bounce.venue_name,
                 bounce_place_id=bounce.place_id
             )
-            enqueue_notification(user_id, payload_to_dict(payload))
+            payload_dict = payload_to_dict(payload)
+
+            # Send WebSocket notification for in-app display (immediate)
+            await send_websocket_notification(user_id, payload_dict)
+
+            # Queue push notification (background)
+            enqueue_notification(user_id, payload_dict)
 
         return bounce_response
 
@@ -706,7 +714,9 @@ async def invite_to_bounce(
 
     logger.info(f"Added {added} invites to bounce {bounce_id}")
 
-    # Queue push notifications to newly invited users (non-blocking)
+    # Send notifications to newly invited users
+    from services.tasks import send_websocket_notification
+
     for user_id in newly_invited:
         payload = NotificationPayload(
             notification_type=NotificationType.BOUNCE_INVITE,
@@ -719,7 +729,13 @@ async def invite_to_bounce(
             bounce_venue_name=bounce.venue_name,
             bounce_place_id=bounce.place_id
         )
-        enqueue_notification(user_id, payload_to_dict(payload))
+        payload_dict = payload_to_dict(payload)
+
+        # Send WebSocket notification for in-app display (immediate)
+        await send_websocket_notification(user_id, payload_dict)
+
+        # Queue push notification (background)
+        enqueue_notification(user_id, payload_dict)
 
     return {"added": added, "total": len(existing_user_ids) + added}
 
@@ -1242,3 +1258,242 @@ async def get_bounce_attendees(
         "attendee_count": count,
         "attendees": attendees
     }
+
+
+# ============================================================================
+# Location Sharing Endpoints
+# ============================================================================
+
+class LocationSharingToggle(BaseModel):
+    is_sharing: bool
+
+
+class LocationUpdate(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class LocationShareInfo(BaseModel):
+    user_id: int
+    nickname: Optional[str]
+    profile_picture: Optional[str]
+    latitude: float
+    longitude: float
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+async def get_bounce_participants(db: AsyncSession, bounce_id: int) -> List[int]:
+    """Get all user IDs who should receive location updates (creator + invited users)"""
+    # Get bounce creator
+    result = await db.execute(
+        select(Bounce.creator_id).where(Bounce.id == bounce_id)
+    )
+    creator_id = result.scalar_one_or_none()
+
+    if not creator_id:
+        return []
+
+    # Get all invited users
+    result = await db.execute(
+        select(BounceInvite.user_id).where(BounceInvite.bounce_id == bounce_id)
+    )
+    invited_ids = [row[0] for row in result.all()]
+
+    # Combine and deduplicate
+    all_participants = list(set([creator_id] + invited_ids))
+    return all_participants
+
+
+async def is_bounce_participant(db: AsyncSession, bounce_id: int, user_id: int) -> bool:
+    """Check if user is the creator or invited to the bounce"""
+    # Check if creator
+    result = await db.execute(
+        select(Bounce).where(Bounce.id == bounce_id, Bounce.creator_id == user_id)
+    )
+    if result.scalar_one_or_none():
+        return True
+
+    # Check if invited
+    result = await db.execute(
+        select(BounceInvite).where(
+            BounceInvite.bounce_id == bounce_id,
+            BounceInvite.user_id == user_id
+        )
+    )
+    if result.scalar_one_or_none():
+        return True
+
+    # Check if public bounce
+    result = await db.execute(
+        select(Bounce).where(Bounce.id == bounce_id, Bounce.is_public == True)
+    )
+    if result.scalar_one_or_none():
+        return True
+
+    return False
+
+
+@router.put("/{bounce_id}/location/sharing")
+async def toggle_location_sharing(
+    bounce_id: int,
+    toggle: LocationSharingToggle,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Toggle location sharing on/off for a bounce"""
+    # Check if user can participate
+    if not await is_bounce_participant(db, bounce_id, current_user.id):
+        raise HTTPException(status_code=403, detail="Not a participant of this bounce")
+
+    # Check bounce exists and is active
+    result = await db.execute(
+        select(Bounce).where(Bounce.id == bounce_id, Bounce.status == 'active')
+    )
+    bounce = result.scalar_one_or_none()
+    if not bounce:
+        raise HTTPException(status_code=404, detail="Bounce not found or not active")
+
+    if toggle.is_sharing:
+        # Create or update location share record
+        result = await db.execute(
+            select(BounceLocationShare).where(
+                BounceLocationShare.bounce_id == bounce_id,
+                BounceLocationShare.user_id == current_user.id
+            )
+        )
+        location_share = result.scalar_one_or_none()
+
+        if location_share:
+            location_share.is_sharing = True
+        else:
+            location_share = BounceLocationShare(
+                bounce_id=bounce_id,
+                user_id=current_user.id,
+                latitude=0,  # Will be updated with first location broadcast
+                longitude=0,
+                is_sharing=True
+            )
+            db.add(location_share)
+
+        await db.commit()
+        logger.info(f"User {current_user.id} started sharing location for bounce {bounce_id}")
+
+        return {"is_sharing": True, "message": "Location sharing enabled"}
+    else:
+        # Stop sharing - update record and notify others
+        result = await db.execute(
+            select(BounceLocationShare).where(
+                BounceLocationShare.bounce_id == bounce_id,
+                BounceLocationShare.user_id == current_user.id
+            )
+        )
+        location_share = result.scalar_one_or_none()
+
+        if location_share:
+            location_share.is_sharing = False
+            await db.commit()
+
+        # Notify other participants that this user stopped sharing
+        participants = await get_bounce_participants(db, bounce_id)
+        stop_message = {
+            "type": "location_sharing_stopped",
+            "bounce_id": bounce_id,
+            "user_id": current_user.id
+        }
+        for participant_id in participants:
+            if participant_id != current_user.id:
+                await manager.send_to_user(participant_id, stop_message)
+
+        logger.info(f"User {current_user.id} stopped sharing location for bounce {bounce_id}")
+
+        return {"is_sharing": False, "message": "Location sharing disabled"}
+
+
+@router.post("/{bounce_id}/location")
+async def update_location(
+    bounce_id: int,
+    location: LocationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Update current user's location and broadcast to other participants"""
+    # Check if user can participate
+    if not await is_bounce_participant(db, bounce_id, current_user.id):
+        raise HTTPException(status_code=403, detail="Not a participant of this bounce")
+
+    # Check if user has sharing enabled
+    result = await db.execute(
+        select(BounceLocationShare).where(
+            BounceLocationShare.bounce_id == bounce_id,
+            BounceLocationShare.user_id == current_user.id,
+            BounceLocationShare.is_sharing == True
+        )
+    )
+    location_share = result.scalar_one_or_none()
+
+    if not location_share:
+        raise HTTPException(status_code=400, detail="Location sharing not enabled")
+
+    # Update location
+    location_share.latitude = location.latitude
+    location_share.longitude = location.longitude
+    await db.commit()
+
+    # Broadcast to other participants via WebSocket
+    participants = await get_bounce_participants(db, bounce_id)
+    location_message = {
+        "type": "location_shared",
+        "bounce_id": bounce_id,
+        "user_id": current_user.id,
+        "nickname": current_user.nickname,
+        "profile_picture": current_user.profile_picture or current_user.instagram_profile_pic,
+        "latitude": location.latitude,
+        "longitude": location.longitude
+    }
+
+    for participant_id in participants:
+        if participant_id != current_user.id:
+            await manager.send_to_user(participant_id, location_message)
+
+    return {"success": True}
+
+
+@router.get("/{bounce_id}/locations", response_model=List[LocationShareInfo])
+async def get_shared_locations(
+    bounce_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Get all users currently sharing their location for this bounce"""
+    # Check if user can participate
+    if not await is_bounce_participant(db, bounce_id, current_user.id):
+        raise HTTPException(status_code=403, detail="Not a participant of this bounce")
+
+    # Get all active location shares with user info
+    result = await db.execute(
+        select(BounceLocationShare, User)
+        .join(User, BounceLocationShare.user_id == User.id)
+        .where(
+            BounceLocationShare.bounce_id == bounce_id,
+            BounceLocationShare.is_sharing == True,
+            BounceLocationShare.latitude != 0  # Exclude users who haven't sent location yet
+        )
+    )
+    rows = result.all()
+
+    locations = [
+        LocationShareInfo(
+            user_id=share.user_id,
+            nickname=user.nickname,
+            profile_picture=user.profile_picture or user.instagram_profile_pic,
+            latitude=share.latitude,
+            longitude=share.longitude,
+            updated_at=share.updated_at
+        )
+        for share, user in rows
+    ]
+
+    return locations

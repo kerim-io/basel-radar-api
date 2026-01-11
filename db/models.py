@@ -223,6 +223,30 @@ class BounceAttendee(Base):
     user = relationship("User")
 
 
+class BounceLocationShare(Base):
+    """
+    Tracks real-time location sharing for bounce attendees.
+    Users can opt-in to share their live location with other bounce participants.
+    """
+    __tablename__ = "bounce_location_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bounce_id = Column(Integer, ForeignKey("bounces.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    is_sharing = Column(Boolean, default=True, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
+
+    # Relationships
+    bounce = relationship("Bounce")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint('bounce_id', 'user_id', name='uq_bounce_user_location'),
+    )
+
+
 class Place(Base):
     """
     Stores Google Places data to avoid duplicate API calls.
