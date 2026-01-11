@@ -5,12 +5,14 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from math import radians, sin, cos, sqrt, atan2
+import json
 
 from db.database import get_async_session
 from db.models import CheckIn, CheckInHistory, User, Place, Bounce, Follow
 from api.dependencies import get_current_user
 from services.geofence import is_in_basel_area
 from services.places.service import get_place_with_photos
+from services.places.autocomplete import index_place as index_place_to_cache
 from api.routes.websocket import manager
 from services.apns_service import NotificationPayload, NotificationType
 from services.cache import cache_get, cache_set, cache_delete
@@ -304,6 +306,18 @@ async def checkin_to_venue(
 
     if not place:
         raise HTTPException(status_code=404, detail="Place not found")
+
+    # Index place to global Redis cache for autocomplete/nearby search
+    types_list = json.loads(place.types) if place.types else []
+    await index_place_to_cache(
+        place_id=place.place_id,
+        name=place.name,
+        address=place.address or "",
+        lat=place.latitude,
+        lng=place.longitude,
+        types=types_list,
+        bounce_count=place.bounce_count
+    )
 
     # Verify user is within proximity
     distance = haversine_distance(

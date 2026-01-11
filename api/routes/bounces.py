@@ -4,6 +4,7 @@ from sqlalchemy import select, desc, func, or_, and_
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
+import json
 import logging
 
 from db.database import get_async_session
@@ -11,6 +12,7 @@ from db.models import Bounce, BounceInvite, BounceAttendee, User, Place, GoogleP
 from api.dependencies import get_current_user
 from services.geofence import haversine_distance
 from services.places import get_place_with_photos
+from services.places.autocomplete import index_place as index_place_to_cache, increment_bounce_count
 from api.routes.websocket import manager
 from services.apns_service import NotificationPayload, NotificationType
 from services.cache import cache_get, cache_set, cache_delete
@@ -142,6 +144,20 @@ async def create_bounce(
             if place:
                 places_fk_id = place.id
                 logger.info(f"Linked bounce to place {place.id} ({place.place_id})")
+
+                # Index place to global Redis cache for autocomplete/nearby search
+                types_list = json.loads(place.types) if place.types else []
+                await index_place_to_cache(
+                    place_id=place.place_id,
+                    name=place.name,
+                    address=place.address or "",
+                    lat=place.latitude,
+                    lng=place.longitude,
+                    types=types_list,
+                    bounce_count=place.bounce_count
+                )
+                # Increment bounce count in Redis cache
+                await increment_bounce_count(place.place_id)
 
         # Create the bounce
         bounce = Bounce(
