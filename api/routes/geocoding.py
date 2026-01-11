@@ -490,7 +490,8 @@ NEARBY_VENUE_TYPES = [
 async def _fetch_and_index_google_nearby(
     lat: float,
     lng: float,
-    radius: int
+    radius: int,
+    types: Optional[set] = None
 ) -> List[PlacePrediction]:
     """Fetch nearby places from Google API and index them to global cache."""
     if not settings.GOOGLE_MAPS_API_KEY:
@@ -499,11 +500,14 @@ async def _fetch_and_index_google_nearby(
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": settings.GOOGLE_MAPS_API_KEY,
-        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.photos",
+        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.photos,places.types",
     }
 
+    # Use provided types or default venue types
+    included_types = list(types) if types else NEARBY_VENUE_TYPES
+
     body = {
-        "includedTypes": NEARBY_VENUE_TYPES,
+        "includedTypes": included_types,
         "maxResultCount": 20,
         "rankPreference": "DISTANCE",
         "locationRestriction": {
@@ -553,6 +557,9 @@ async def _fetch_and_index_google_nearby(
                     place_id = place.get("id", "")
                     display_name = place.get("displayName", {}).get("text", "")
                     address = place.get("formattedAddress", "")
+                    place_types = place.get("types", [])
+
+                    print(f"🏢 Place: {display_name} | types: {place_types}")
 
                     predictions.append(PlacePrediction(
                         place_id=place_id,
@@ -580,6 +587,7 @@ async def places_nearby(
     lat: float = Query(..., ge=-90, le=90, description="Map center latitude"),
     lng: float = Query(..., ge=-180, le=180, description="Map center longitude"),
     radius: int = Query(1000, ge=100, le=50000, description="Search radius in meters"),
+    types: Optional[str] = Query(None, description="Comma-separated venue types to filter (bar,cafe,restaurant,night_club)"),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -590,14 +598,18 @@ async def places_nearby(
 
     Falls back to Google API if cache has insufficient results.
 
-    Example: /geocoding/places/nearby?lat=48.14&lng=11.58&radius=1000
+    Example: /geocoding/places/nearby?lat=48.14&lng=11.58&radius=1000&types=bar,cafe
     """
+    # Parse types filter
+    type_filter = set(types.split(",")) if types else None
+
     # 1. Search global geo-index FIRST
     cached_results, cache_hit = await global_nearby_search(
         lat=lat,
         lng=lng,
         radius_meters=radius,
-        limit=20
+        limit=20,
+        types=type_filter
     )
 
     # 2. If enough results from cache, return them
@@ -606,7 +618,7 @@ async def places_nearby(
         return AutocompleteResponse(predictions=predictions, from_cache=True)
 
     # 3. Fall back to Google API
-    google_results = await _fetch_and_index_google_nearby(lat, lng, radius)
+    google_results = await _fetch_and_index_google_nearby(lat, lng, radius, type_filter)
 
     # 4. Merge cached + Google results (deduped)
     seen_place_ids = set()
