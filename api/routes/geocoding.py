@@ -147,6 +147,7 @@ class PlacePrediction(BaseModel):
     longitude: Optional[float] = None
     distance_meters: Optional[int] = None  # Distance from user in meters
     photo_url: Optional[str] = None  # First photo URL
+    types: List[str] = []  # Venue types (bar, restaurant, cafe, etc.)
     from_cache: bool = False  # True if from Redis cache, False if from Google API
 
 
@@ -212,8 +213,8 @@ async def fetch_place_details_for_autocomplete(
     place_id: str,
     ssl_ctx,
     api_key: str
-) -> tuple[Optional[float], Optional[float], Optional[str]]:
-    """Fetch coordinates and first photo for a place. Returns (lat, lng, photo_url).
+) -> tuple[Optional[float], Optional[float], Optional[str], List[str]]:
+    """Fetch coordinates, photo, and types for a place. Returns (lat, lng, photo_url, types).
 
     Uses cache to avoid redundant API calls - popular places are fetched once
     and reused across all users' searches.
@@ -226,7 +227,8 @@ async def fetch_place_details_for_autocomplete(
         lng = cached.get("longitude")
         photos = cached.get("photos", [])
         photo_url = photos[0].get("url") if photos else None
-        return lat, lng, photo_url
+        types = cached.get("types", [])
+        return lat, lng, photo_url, types
 
     params = {
         "place_id": place_id,
@@ -264,22 +266,23 @@ async def fetch_place_details_for_autocomplete(
                     })
 
             # Cache full place details for 24 hours (reused by /places/details endpoint too)
+            types = result.get("types", [])
             place_details = {
                 "place_id": place_id,
                 "name": result.get("name", ""),
                 "address": result.get("formatted_address", ""),
                 "latitude": lat,
                 "longitude": lng,
-                "types": result.get("types", []),
+                "types": types,
                 "photos": photos
             }
             await cache_set(cache_key, place_details)
 
             # Return first photo URL for autocomplete thumbnail
             first_photo_url = photos[0]["url"] if photos else None
-            return lat, lng, first_photo_url
+            return lat, lng, first_photo_url, types
     except Exception:
-        return None, None, None
+        return None, None, None, []
 
 
 async def _index_predictions_to_global_cache(predictions: List[PlacePrediction]) -> None:
@@ -292,7 +295,7 @@ async def _index_predictions_to_global_cache(predictions: List[PlacePrediction])
                 address=pred.address or "",
                 lat=pred.latitude,
                 lng=pred.longitude,
-                types=[],  # Could parse from details if needed
+                types=pred.types,
                 bounce_count=0,
                 photo_url=pred.photo_url
             )
@@ -404,7 +407,7 @@ async def places_autocomplete(
                     if not place_pred:
                         continue
 
-                    place_lat, place_lng, photo_url = details_results[detail_idx]
+                    place_lat, place_lng, photo_url, place_types = details_results[detail_idx]
                     detail_idx += 1
 
                     # Calculate distance if we have both user location and place location
@@ -426,6 +429,7 @@ async def places_autocomplete(
                         longitude=place_lng,
                         distance_meters=distance_meters,
                         photo_url=photo_url,
+                        types=place_types or [],
                         from_cache=False  # From Google API
                     ))
 
@@ -559,8 +563,6 @@ async def _fetch_and_index_google_nearby(
                     address = place.get("formattedAddress", "")
                     place_types = place.get("types", [])
 
-                    print(f"🏢 Place: {display_name} | types: {place_types}")
-
                     predictions.append(PlacePrediction(
                         place_id=place_id,
                         name=display_name,
@@ -570,6 +572,7 @@ async def _fetch_and_index_google_nearby(
                         longitude=place_lng,
                         distance_meters=distance_meters,
                         photo_url=photo_url,
+                        types=place_types,
                         from_cache=False  # From Google API
                     ))
 
@@ -611,12 +614,18 @@ async def places_nearby(
         limit=20
     )
 
+    # Log what we got from cache
+    print(f"🔍 Nearby: type_filter={type_filter}, cached={len(cached_results)}")
+    for p in cached_results[:3]:
+        print(f"   - {p.get('name')}: types={p.get('types', [])}")
+
     # Filter cached results by type if filter specified
     if type_filter and cached_results:
         cached_results = [
             p for p in cached_results
             if any(t in type_filter for t in p.get("types", []))
         ]
+        print(f"🔍 After filter: {len(cached_results)} results")
 
     # 2. If enough results from cache, return them
     if len(cached_results) >= 5:
