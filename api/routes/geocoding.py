@@ -428,20 +428,12 @@ async def places_nearby(
     Example: /geocoding/places/nearby?lat=48.14&lng=11.58&radius=1000
     """
     # Round coords to ~5km precision for cache efficiency
-    lat_rounded = round(lat, 1)
-    lng_rounded = round(lng, 1)
+    lat_rounded = round(lat * 20) / 20  # nearest 0.05 (~5.5km)
+    lng_rounded = round(lng * 20) / 20
     cache_key = f"places_nearby:{lat_rounded}:{lng_rounded}:{radius}"
     cached = await cache_get(cache_key)
     if cached:
-        # Re-rank by distance to actual map center
-        predictions = []
-        for p in cached:
-            pred = PlacePrediction(**p)
-            if pred.latitude and pred.longitude:
-                pred.distance_meters = haversine_distance_meters(lat, lng, pred.latitude, pred.longitude)
-            predictions.append(pred)
-        predictions.sort(key=lambda x: x.distance_meters if x.distance_meters is not None else float('inf'))
-        return AutocompleteResponse(predictions=predictions, from_cache=True)
+        return AutocompleteResponse(predictions=[PlacePrediction(**p) for p in cached], from_cache=True)
 
     if not settings.GOOGLE_MAPS_API_KEY:
         raise HTTPException(
