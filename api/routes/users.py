@@ -81,7 +81,6 @@ class ProfileResponse(BaseModel):
     instagram_profile_pic: Optional[str] = None
     linkedin_handle: Optional[str] = None
     # Stats
-    posts_count: int = 0
     followers_count: int = 0
     following_count: int = 0
     # Relationship state (only returned when viewing others)
@@ -197,12 +196,9 @@ async def get_profile(
     cached_stats = await cache_get(cache_key)
 
     if cached_stats:
-        posts_count = cached_stats["posts"]
         followers_count = cached_stats["followers"]
         following_count = cached_stats["following"]
     else:
-        posts_count = 0  # Posts feature removed
-
         # Get followers count (users following this user)
         followers_result = await db.execute(
             select(func.count(Follow.id)).where(Follow.following_id == current_user.id)
@@ -217,7 +213,6 @@ async def get_profile(
 
         # Cache stats for 5 minutes
         await cache_set(cache_key, {
-            "posts": posts_count,
             "followers": followers_count,
             "following": following_count
         }, ttl=300)
@@ -235,7 +230,6 @@ async def get_profile(
         instagram_handle=current_user.instagram_handle,
         instagram_profile_pic=current_user.instagram_profile_pic,
         linkedin_handle=current_user.linkedin_handle,
-        posts_count=posts_count,
         followers_count=followers_count,
         following_count=following_count
     )
@@ -977,12 +971,9 @@ async def get_user_profile(
     cached_stats = await cache_get(cache_key)
 
     if cached_stats:
-        posts_count = cached_stats["posts"]
         followers_count = cached_stats["followers"]
         following_count = cached_stats["following"]
     else:
-        posts_count = 0  # Posts feature removed
-
         # Get followers count (users following this user)
         followers_result = await db.execute(
             select(func.count(Follow.id)).where(Follow.following_id == user_id)
@@ -997,7 +988,6 @@ async def get_user_profile(
 
         # Cache stats for 5 minutes
         await cache_set(cache_key, {
-            "posts": posts_count,
             "followers": followers_count,
             "following": following_count
         }, ttl=300)
@@ -1037,7 +1027,6 @@ async def get_user_profile(
         instagram_handle=user.instagram_handle,
         instagram_profile_pic=user.instagram_profile_pic,
         has_profile=user.has_profile,
-        posts_count=posts_count,
         followers_count=followers_count,
         following_count=following_count,
         is_followed_by_current_user=is_followed,
