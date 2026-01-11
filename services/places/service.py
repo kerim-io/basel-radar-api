@@ -138,10 +138,7 @@ async def get_place_with_photos(
 
     if existing_place:
         # Increment the appropriate count
-        if source == "post":
-            existing_place.post_count += 1
-            logger.info(f"Place {place_id} already exists, post_count now {existing_place.post_count}")
-        elif source == "bounce":
+        if source == "bounce":
             existing_place.bounce_count += 1
             logger.info(f"Place {place_id} already exists, bounce_count now {existing_place.bounce_count}")
         # checkin source doesn't increment counts - checkins tracked separately
@@ -158,7 +155,6 @@ async def get_place_with_photos(
 
     # Set initial counts based on source
     initial_bounce_count = 1 if source == "bounce" else 0
-    initial_post_count = 1 if source == "post" else 0
 
     if details:
         # Use API data
@@ -169,8 +165,7 @@ async def get_place_with_photos(
             latitude=details["latitude"],
             longitude=details["longitude"],
             types=json.dumps(details["types"]) if details["types"] else None,
-            bounce_count=initial_bounce_count,
-            post_count=initial_post_count
+            bounce_count=initial_bounce_count
         )
     else:
         # Fallback to provided data if API fails
@@ -182,8 +177,7 @@ async def get_place_with_photos(
             latitude=latitude,
             longitude=longitude,
             types=None,
-            bounce_count=initial_bounce_count,
-            post_count=initial_post_count
+            bounce_count=initial_bounce_count
         )
 
     db.add(place)
