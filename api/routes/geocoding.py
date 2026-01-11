@@ -164,6 +164,7 @@ class PlaceDetails(BaseModel):
 class AutocompleteResponse(BaseModel):
     """Response from places autocomplete"""
     predictions: List[PlacePrediction]
+    from_cache: bool = False
 
 
 GOOGLE_PLACES_AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete"
@@ -295,7 +296,7 @@ async def places_autocomplete(
     cache_key = f"places_autocomplete:{query.lower()}:{lat_rounded}:{lng_rounded}"
     cached = await cache_get(cache_key)
     if cached:
-        return AutocompleteResponse(predictions=[PlacePrediction(**p) for p in cached])
+        return AutocompleteResponse(predictions=[PlacePrediction(**p) for p in cached], from_cache=True)
 
     if not settings.GOOGLE_MAPS_API_KEY:
         raise HTTPException(
@@ -432,7 +433,7 @@ async def places_nearby(
     cache_key = f"places_nearby:{lat_rounded}:{lng_rounded}:{radius}"
     cached = await cache_get(cache_key)
     if cached:
-        return AutocompleteResponse(predictions=[PlacePrediction(**p) for p in cached])
+        return AutocompleteResponse(predictions=[PlacePrediction(**p) for p in cached], from_cache=True)
 
     if not settings.GOOGLE_MAPS_API_KEY:
         raise HTTPException(
