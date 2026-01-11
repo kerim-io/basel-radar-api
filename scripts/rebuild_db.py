@@ -59,10 +59,9 @@ async def rebuild_database():
         print("\nTables created:")
         print("  - users")
         print("  - follows")
-        print("  - posts")
-        print("  - check_ins")
         print("  - refresh_tokens")
-        print("  - likes")
+        print("  - bounces")
+        print("  - places")
         print("=" * 60 + "\n")
 
     except Exception as e:

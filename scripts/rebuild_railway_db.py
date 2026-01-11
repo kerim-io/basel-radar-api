@@ -33,11 +33,7 @@ TABLES_TO_DROP = [
     "google_pics",
     "bounce_attendees",
     "bounce_invites",
-    "likes",
     "refresh_tokens",
-    "check_ins",
-    "livestreams",
-    "posts",
     "bounces",
     "follows",
     # Parent tables last

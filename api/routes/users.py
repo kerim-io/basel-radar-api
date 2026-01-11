@@ -13,7 +13,7 @@ from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, Post, Like, CheckIn, RefreshToken, Livestream
+from db.models import User, Follow, RefreshToken
 from api.dependencies import get_current_user, limiter
 from core.config import settings
 from api.routes.websocket import manager as ws_manager
@@ -201,11 +201,7 @@ async def get_profile(
         followers_count = cached_stats["followers"]
         following_count = cached_stats["following"]
     else:
-        # Get posts count
-        posts_result = await db.execute(
-            select(func.count(Post.id)).where(Post.user_id == current_user.id)
-        )
-        posts_count = posts_result.scalar() or 0
+        posts_count = 0  # Posts feature removed
 
         # Get followers count (users following this user)
         followers_result = await db.execute(
@@ -985,11 +981,7 @@ async def get_user_profile(
         followers_count = cached_stats["followers"]
         following_count = cached_stats["following"]
     else:
-        # Get posts count
-        posts_result = await db.execute(
-            select(func.count(Post.id)).where(Post.user_id == user_id)
-        )
-        posts_count = posts_result.scalar() or 0
+        posts_count = 0  # Posts feature removed
 
         # Get followers count (users following this user)
         followers_result = await db.execute(
@@ -1116,14 +1108,10 @@ async def delete_account(
     Permanently delete user account and all associated data.
 
     This endpoint:
-    1. Deletes all user likes
-    2. Deletes all user posts (and associated likes on those posts)
-    3. Deletes all check-ins
-    4. Deletes all livestreams
-    5. Deletes all follows (as follower and following)
-    6. Deletes all refresh tokens
-    7. Deletes profile picture file from disk
-    8. Deletes user account
+    1. Deletes all follows (as follower and following)
+    2. Deletes all refresh tokens
+    3. Deletes profile picture file from disk
+    4. Deletes user account
 
     All operations are performed in a transaction with rollback on failure.
     """
@@ -1132,65 +1120,12 @@ async def delete_account(
 
     try:
         deleted_counts = {
-            "likes": 0,
-            "posts": 0,
-            "check_ins": 0,
-            "livestreams": 0,
             "follows": 0,
             "refresh_tokens": 0,
             "files": 0
         }
 
-        # 1. Delete user's likes
-        result = await db.execute(
-            delete(Like).where(Like.user_id == current_user.id)
-        )
-        deleted_counts["likes"] = result.rowcount
-
-        # 2. Get all user posts to delete associated likes and media
-        posts_result = await db.execute(
-            select(Post).where(Post.user_id == current_user.id)
-        )
-        user_posts = posts_result.scalars().all()
-        post_ids = [post.id for post in user_posts]
-
-        # Delete likes on user's posts
-        if post_ids:
-            await db.execute(
-                delete(Like).where(Like.post_id.in_(post_ids))
-            )
-
-        # Delete media files associated with posts
-        for post in user_posts:
-            if post.media_url:
-                media_path = Path(settings.UPLOAD_DIR) / post.media_url.lstrip("/files/")
-                if media_path.exists():
-                    try:
-                        os.remove(media_path)
-                        deleted_counts["files"] += 1
-                    except Exception as e:
-                        logger.warning("Failed to delete media file", extra={"media_path": str(media_path), "error": str(e)})
-
-        # Delete user's posts
-        if post_ids:
-            result = await db.execute(
-                delete(Post).where(Post.id.in_(post_ids))
-            )
-            deleted_counts["posts"] = result.rowcount
-
-        # 3. Delete check-ins
-        result = await db.execute(
-            delete(CheckIn).where(CheckIn.user_id == current_user.id)
-        )
-        deleted_counts["check_ins"] = result.rowcount
-
-        # 4. Delete livestreams
-        result = await db.execute(
-            delete(Livestream).where(Livestream.user_id == current_user.id)
-        )
-        deleted_counts["livestreams"] = result.rowcount
-
-        # 5. Delete follows (as follower)
+        # 1. Delete follows (as follower)
         result = await db.execute(
             delete(Follow).where(Follow.follower_id == current_user.id)
         )
@@ -1203,13 +1138,13 @@ async def delete_account(
         follow_count += result.rowcount
         deleted_counts["follows"] = follow_count
 
-        # 6. Delete refresh tokens
+        # 2. Delete refresh tokens
         result = await db.execute(
             delete(RefreshToken).where(RefreshToken.user_id == current_user.id)
         )
         deleted_counts["refresh_tokens"] = result.rowcount
 
-        # 7. Delete profile picture file
+        # 3. Delete profile picture file
         if current_user.profile_picture:
             profile_pic_path = Path(settings.UPLOAD_DIR) / current_user.profile_picture.lstrip("/files/")
             if profile_pic_path.exists():
@@ -1219,7 +1154,7 @@ async def delete_account(
                 except Exception as e:
                     logger.warning("Failed to delete profile picture", extra={"profile_pic_path": str(profile_pic_path), "error": str(e)})
 
-        # 8. Delete user account
+        # 4. Delete user account
         await db.delete(current_user)
 
         # Commit all changes

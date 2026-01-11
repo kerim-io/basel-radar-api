@@ -55,28 +55,24 @@ async def run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_handle VARCHAR(100)",
         # Places table
         "ALTER TABLE places ADD COLUMN IF NOT EXISTS bounce_count INTEGER DEFAULT 0",
-        "ALTER TABLE places ADD COLUMN IF NOT EXISTS post_count INTEGER DEFAULT 0",
         "ALTER TABLE places ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE",
-        # Posts table
-        "ALTER TABLE posts ADD COLUMN IF NOT EXISTS venue_name VARCHAR(255)",
-        "ALTER TABLE posts ADD COLUMN IF NOT EXISTS place_id INTEGER REFERENCES places(id) ON DELETE SET NULL",
         # Bounces table
         "ALTER TABLE bounces ADD COLUMN IF NOT EXISTS place_id INTEGER REFERENCES places(id) ON DELETE SET NULL",
         # Check-ins table
-        "ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS place_id INTEGER REFERENCES places(id) ON DELETE SET NULL",
+        "ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS place_id VARCHAR(255)",
+        "ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS places_fk_id INTEGER REFERENCES places(id) ON DELETE SET NULL",
         "ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
         "ALTER TABLE check_ins ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
         # Indexes
-        "CREATE INDEX IF NOT EXISTS ix_posts_place_id ON posts(place_id)",
         "CREATE INDEX IF NOT EXISTS ix_bounces_place_id ON bounces(place_id)",
         "CREATE INDEX IF NOT EXISTS idx_checkins_place_id ON check_ins(place_id)",
+        "CREATE INDEX IF NOT EXISTS idx_checkins_places_fk ON check_ins(places_fk_id)",
         "CREATE INDEX IF NOT EXISTS idx_checkins_last_seen ON check_ins(last_seen_at)",
         "CREATE INDEX IF NOT EXISTS idx_checkins_active ON check_ins(is_active) WHERE is_active = true",
         # Follows table - close friend feature
         "ALTER TABLE follows ADD COLUMN IF NOT EXISTS is_close_friend BOOLEAN DEFAULT FALSE",
         # Performance indexes for high-traffic queries
         "CREATE INDEX IF NOT EXISTS idx_follows_follower_following ON follows(follower_id, following_id)",
-        "CREATE INDEX IF NOT EXISTS idx_posts_user_created ON posts(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_device_tokens_user_active ON device_tokens(user_id, is_active) WHERE is_active = true",
     ]
 

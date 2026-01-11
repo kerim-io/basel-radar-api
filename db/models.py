@@ -49,9 +49,7 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    posts = relationship("Post", back_populates="user", cascade="all, delete-orphan")
     check_ins = relationship("CheckIn", back_populates="user", cascade="all, delete-orphan")
-    livestreams = relationship("Livestream", back_populates="user", cascade="all, delete-orphan")
     followers = relationship("Follow", foreign_keys="Follow.following_id", back_populates="following", cascade="all, delete-orphan")
     following = relationship("Follow", foreign_keys="Follow.follower_id", back_populates="follower", cascade="all, delete-orphan")
     bounces_created = relationship("Bounce", back_populates="creator", cascade="all, delete-orphan")
@@ -117,27 +115,6 @@ class NotificationPreference(Base):
     user = relationship("User", backref="notification_preferences")
 
 
-class Post(Base):
-    __tablename__ = "posts"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    places_fk_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
-    content = Column(Text, nullable=False)
-    media_url = Column(String, nullable=True)
-    media_type = Column(String(10), nullable=True)  # 'image', 'video', None for text
-    latitude = Column(Float, nullable=True)
-    longitude = Column(Float, nullable=True)
-    venue_name = Column(String(255), nullable=True)  # Venue name from MapKit (e.g., "Hooters Miami")
-    place_id = Column(String(255), nullable=True, index=True)  # Google Places ID for venue
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
-
-    # Relationships
-    user = relationship("User", back_populates="posts")
-    place = relationship("Place", back_populates="posts", foreign_keys=[places_fk_id])
-    likes = relationship("Like", back_populates="post", cascade="all, delete-orphan")
-
-
 class CheckIn(Base):
     __tablename__ = "check_ins"
 
@@ -169,19 +146,6 @@ class RefreshToken(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class Like(Base):
-    __tablename__ = "likes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    user = relationship("User", backref="user_likes")
-    post = relationship("Post", back_populates="likes")
-
-
 class AnonymousLocation(Base):
     __tablename__ = "anonymous_locations"
 
@@ -189,40 +153,6 @@ class AnonymousLocation(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
-
-
-class Livestream(Base):
-    __tablename__ = "livestreams"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    room_id = Column(String(255), unique=True, index=True, nullable=False)
-    post_id = Column(String(255), nullable=True)  # Optional link to a post
-
-    # Stream timing
-    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
-    ended_at = Column(DateTime(timezone=True), nullable=True)
-
-    # Stream status: 'active', 'ended', 'error'
-    status = Column(String(20), default='active', nullable=False, index=True)
-
-    # Viewer statistics
-    max_viewers = Column(Integer, default=0, nullable=False)
-    total_viewers = Column(Integer, default=0, nullable=False)  # Unique viewers
-
-    # Stream metadata
-    title = Column(String(255), nullable=True)
-    description = Column(Text, nullable=True)
-
-    # Relationships
-    user = relationship("User", back_populates="livestreams")
-
-    @property
-    def duration_seconds(self):
-        """Calculate stream duration in seconds"""
-        if self.ended_at:
-            return int((self.ended_at - self.started_at).total_seconds())
-        return None
 
 
 class Bounce(Base):
@@ -308,14 +238,12 @@ class Place(Base):
     longitude = Column(Float, nullable=False)
     types = Column(Text, nullable=True)  # JSON array of place types
     bounce_count = Column(Integer, default=0, nullable=False)  # Incremented when new bounces reference this place
-    post_count = Column(Integer, default=0, nullable=False)  # Incremented when new posts reference this place
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
     photos = relationship("GooglePic", back_populates="place", cascade="all, delete-orphan")
     bounces = relationship("Bounce", back_populates="place")
-    posts = relationship("Post", back_populates="place")
     check_ins = relationship("CheckIn", back_populates="place")
 
 
@@ -337,3 +265,31 @@ class GooglePic(Base):
 
     # Relationships
     place = relationship("Place", back_populates="photos")
+
+
+class CheckInHistory(Base):
+    """
+    Permanent record of all user check-ins at venues.
+    Query by user_id for user's check-in history.
+    Query by place_id for venue's check-in history.
+    """
+    __tablename__ = "check_in_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    place_id = Column(String(255), nullable=False, index=True)  # Google Places ID
+    places_fk_id = Column(Integer, ForeignKey("places.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Denormalized venue info for historical record
+    venue_name = Column(String(255), nullable=False)
+    venue_address = Column(String(500), nullable=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+
+    # Timestamps
+    checked_in_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    checked_out_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User")
+    place = relationship("Place")

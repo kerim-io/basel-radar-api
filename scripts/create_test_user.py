@@ -1,5 +1,5 @@
 """
-Create a second test user for testing multi-user features like livestreaming and follows
+Create a second test user for testing multi-user features like follows
 """
 import asyncio
 from sqlalchemy import select
@@ -32,7 +32,7 @@ async def create_test_user():
                 last_name="Streamer",
                 nickname="TestStreamer",
                 email="streamer@test.com",
-                bio="Test user for livestream testing",
+                bio="Test user for testing",
                 can_post=True,
                 is_active=True
             )

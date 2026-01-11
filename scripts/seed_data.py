@@ -108,16 +108,12 @@ async def seed_database():
         print("🌱 Starting database seed...")
 
         # Clear existing data
-        print("🗑️  Clearing existing data...")
+        print("Clearing existing data...")
         await db.execute(text("DELETE FROM bounce_invites"))
         await db.execute(text("DELETE FROM bounces"))
-        await db.execute(text("DELETE FROM likes"))
         await db.execute(text("DELETE FROM follows"))
-        await db.execute(text("DELETE FROM posts"))
-        await db.execute(text("DELETE FROM check_ins"))
         await db.execute(text("DELETE FROM refresh_tokens"))
         await db.execute(text("DELETE FROM anonymous_locations"))
-        await db.execute(text("DELETE FROM livestreams"))
         await db.execute(text("DELETE FROM users"))
         await db.commit()
 
