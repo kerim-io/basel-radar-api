@@ -13,7 +13,7 @@ from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, RefreshToken
+from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference
 from api.dependencies import get_current_user, limiter
 from core.config import settings
 from api.routes.websocket import manager as ws_manager
@@ -996,8 +996,9 @@ async def delete_account(
     This endpoint:
     1. Deletes all follows (as follower and following)
     2. Deletes all refresh tokens
-    3. Deletes profile picture file from disk
-    4. Deletes user account
+    3. Deletes all device tokens (push notifications)
+    4. Deletes profile picture file from disk
+    5. Deletes user account
 
     All operations are performed in a transaction with rollback on failure.
     """
@@ -1030,7 +1031,18 @@ async def delete_account(
         )
         deleted_counts["refresh_tokens"] = result.rowcount
 
-        # 3. Delete profile picture file
+        # 3. Delete device tokens (push notification tokens)
+        result = await db.execute(
+            delete(DeviceToken).where(DeviceToken.user_id == current_user.id)
+        )
+        deleted_counts["device_tokens"] = result.rowcount
+
+        # 4. Delete notification preferences
+        await db.execute(
+            delete(NotificationPreference).where(NotificationPreference.user_id == current_user.id)
+        )
+
+        # 5. Delete profile picture file
         if current_user.profile_picture:
             profile_pic_path = Path(settings.UPLOAD_DIR) / current_user.profile_picture.lstrip("/files/")
             if profile_pic_path.exists():
@@ -1040,7 +1052,7 @@ async def delete_account(
                 except Exception as e:
                     logger.warning("Failed to delete profile picture", extra={"profile_pic_path": str(profile_pic_path), "error": str(e)})
 
-        # 4. Delete user account
+        # 6. Delete user account
         await db.delete(current_user)
 
         # Commit all changes

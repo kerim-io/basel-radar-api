@@ -90,7 +90,7 @@ class DeviceToken(Base):
     last_used_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, index=True)
 
-    user = relationship("User", backref="device_tokens")
+    user = relationship("User", backref="device_tokens", passive_deletes=True)
 
     __table_args__ = (
         UniqueConstraint('user_id', 'device_token', name='uq_user_device_token'),
@@ -112,7 +112,7 @@ class NotificationPreference(Base):
     push_enabled = Column(Boolean, default=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    user = relationship("User", backref="notification_preferences")
+    user = relationship("User", backref="notification_preferences", passive_deletes=True)
 
 
 class CheckIn(Base):
