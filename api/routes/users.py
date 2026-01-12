@@ -20,6 +20,7 @@ from api.routes.websocket import manager as ws_manager
 from services.geofence import haversine_distance
 from services.cache import cache_get, cache_set, cache_delete
 from services.tasks import enqueue_notification, payload_to_dict
+from services.instagram import fetch_instagram_profile
 import re
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -302,9 +303,6 @@ async def update_instagram_handle(
     db: AsyncSession = Depends(get_async_session)
 ):
     """Update current user's Instagram handle and fetch their profile pic"""
-    import httpx
-    import json
-
     handle = data.instagram_handle
 
     # Clean handle - remove @ if present
@@ -318,46 +316,9 @@ async def update_instagram_handle(
 
     # Fetch profile pic if handle provided
     if handle:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-            "Accept": "*/*",
-            "X-IG-App-ID": "936619743392459",
-        }
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://www.instagram.com/api/v1/users/web_profile_info/?username={handle}",
-                    headers=headers,
-                    timeout=10.0
-                )
-
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                        user_data = data.get("data", {}).get("user", {})
-                        pic_url = user_data.get("profile_pic_url_hd") or user_data.get("profile_pic_url")
-                        if pic_url:
-                            current_user.instagram_profile_pic = pic_url
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-
-                # Fallback to scraping
-                if not current_user.instagram_profile_pic:
-                    response = await client.get(
-                        f"https://www.instagram.com/{handle}/",
-                        headers={"User-Agent": headers["User-Agent"], "Accept": "text/html"},
-                        follow_redirects=True,
-                        timeout=10.0
-                    )
-                    if response.status_code == 200:
-                        import re
-                        match = re.search(r'"profile_pic_url_hd":"([^"]+)"', response.text)
-                        if match:
-                            current_user.instagram_profile_pic = match.group(1).replace("\\u0026", "&").replace("\\/", "/")
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch Instagram profile pic for {handle}: {e}")
+        profile = await fetch_instagram_profile(handle)
+        if profile.profile_pic_url:
+            current_user.instagram_profile_pic = profile.profile_pic_url
 
     await db.commit()
 
@@ -505,88 +466,17 @@ async def lookup_instagram_profile(
     1. Instagram's web API endpoint
     2. Scraping the profile page HTML
     """
-    import httpx
-    import json
-
     handle = request.handle.lstrip("@").strip()
     if not handle:
         raise HTTPException(status_code=400, detail="Handle required")
 
-    profile_pic_url = None
-    full_name = None
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "X-IG-App-ID": "936619743392459",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            # Method 1: Try the web profile info endpoint
-            response = await client.get(
-                f"https://www.instagram.com/api/v1/users/web_profile_info/?username={handle}",
-                headers=headers,
-                timeout=10.0
-            )
-
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    user_data = data.get("data", {}).get("user", {})
-                    profile_pic_url = user_data.get("profile_pic_url_hd") or user_data.get("profile_pic_url")
-                    full_name = user_data.get("full_name")
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-            # Method 2: Fallback to scraping profile page
-            if not profile_pic_url:
-                response = await client.get(
-                    f"https://www.instagram.com/{handle}/",
-                    headers={
-                        "User-Agent": headers["User-Agent"],
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9",
-                    },
-                    follow_redirects=True,
-                    timeout=10.0
-                )
-
-                if response.status_code == 200:
-                    html = response.text
-
-                    # Try to find profile_pic_url_hd in JSON data
-                    import re
-                    match = re.search(r'"profile_pic_url_hd":"([^"]+)"', html)
-                    if match:
-                        profile_pic_url = match.group(1).replace("\\u0026", "&").replace("\\/", "/")
-                    else:
-                        # Try profile_pic_url
-                        match = re.search(r'"profile_pic_url":"([^"]+)"', html)
-                        if match:
-                            profile_pic_url = match.group(1).replace("\\u0026", "&").replace("\\/", "/")
-                        else:
-                            # Fallback: og:image meta tag
-                            match = re.search(r'property="og:image"\s+content="([^"]+)"', html)
-                            if match:
-                                profile_pic_url = match.group(1)
-
-                    # Try to get full name
-                    if not full_name:
-                        match = re.search(r'"full_name":"([^"]*)"', html)
-                        if match:
-                            full_name = match.group(1)
-
-    except Exception as e:
-        logger.warning(f"Instagram lookup error for {handle}: {e}")
+    profile = await fetch_instagram_profile(handle)
 
     return {
-        "handle": handle,
-        "profile_pic_url": profile_pic_url,
-        "full_name": full_name,
-        "success": profile_pic_url is not None
+        "handle": profile.handle,
+        "profile_pic_url": profile.profile_pic_url,
+        "full_name": profile.full_name,
+        "success": profile.success
     }
 
 
