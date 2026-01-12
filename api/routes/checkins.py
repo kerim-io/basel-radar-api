@@ -240,10 +240,7 @@ async def get_venues_with_checkins_in_area(
 
     venues = []
     rows = result.all()
-    print(f"📊 Found {len(rows)} place_ids with active check-ins")
     for row in rows:
-        print(f"   - place_id={row.place_id}, count={row.checkin_count}")
-
         # Get place info from Place table (required for accurate coordinates)
         place_result = await db.execute(
             select(Place).where(Place.place_id == row.place_id)
@@ -251,8 +248,6 @@ async def get_venues_with_checkins_in_area(
         place = place_result.scalar_one_or_none()
 
         if not place:
-            # Skip if no Place record exists (shouldn't happen normally)
-            print(f"⚠️ No Place record for place_id: {row.place_id}")
             continue
 
         # Filter by distance using venue coordinates from Place table

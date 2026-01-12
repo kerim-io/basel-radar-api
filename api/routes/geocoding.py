@@ -527,7 +527,6 @@ async def _fetch_and_index_google_nearby(
         async with aiohttp.ClientSession() as session:
             async with session.post(GOOGLE_PLACES_NEARBY_URL, headers=headers, json=body, ssl=ssl_ctx) as response:
                 data = await response.json()
-                print(f"🌐 GOOGLE NEARBY RAW RESPONSE: {data}")
 
                 if response.status != 200:
                     return []

@@ -20,10 +20,6 @@ async def verify_apple_token(code: str, redirect_uri: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.post(url, data=data)
 
-        # Log Apple's response for debugging
-        print(f"Apple response status: {response.status_code}")
-        print(f"Apple response body: {response.text}")
-
         if response.status_code != 200:
             raise Exception(f"Apple auth failed: {response.text}")
 
@@ -50,12 +46,6 @@ async def generate_client_secret() -> str:
     from jose import jwt
     import os
 
-    # Debug config
-    print(f"🔑 Apple Config:")
-    print(f"   Team ID: {settings.APPLE_TEAM_ID}")
-    print(f"   Key ID: {settings.APPLE_KEY_ID}")
-    print(f"   Client ID: {settings.APPLE_CLIENT_ID}")
-
     # Load private key (use absolute path)
     from pathlib import Path
     base_dir = Path(__file__).parent.parent
@@ -63,8 +53,6 @@ async def generate_client_secret() -> str:
 
     if not key_path.exists():
         raise FileNotFoundError(f"Apple private key not found at {key_path}")
-
-    print(f"   Key file: {key_path} ✓")
 
     with open(key_path, "r") as f:
         private_key = f.read()
@@ -83,10 +71,7 @@ async def generate_client_secret() -> str:
         "sub": settings.APPLE_CLIENT_ID
     }
 
-    print(f"   JWT payload: iss={payload['iss']}, sub={payload['sub']}")
-
     client_secret = jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
-    print(f"   Client secret generated (length: {len(client_secret)})")
 
     return client_secret
 

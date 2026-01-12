@@ -55,12 +55,6 @@ async def apple_signin(
     db: AsyncSession = Depends(get_async_session)
 ):
     """Sign in with Apple - validates code with Apple servers"""
-    # Log what we received from iOS
-    print(f"📱 Apple Auth Request:")
-    print(f"   given_name: {auth_request.given_name}")
-    print(f"   family_name: {auth_request.family_name}")
-    print(f"   email: {auth_request.email}")
-
     try:
         # Verify Apple token
         apple_data = await verify_apple_token(auth_request.code, auth_request.redirect_uri)
@@ -121,9 +115,6 @@ async def apple_signin(
 
         # Refresh user to ensure has_profile property has fresh data
         await db.refresh(user)
-
-        print(f"✅ Auth response: user_id={user.id}, has_profile={user.has_profile}")
-        print(f"   first_name={user.first_name}, last_name={user.last_name}, nickname={user.nickname}")
 
         return AuthResponse(
             access_token=access_token,

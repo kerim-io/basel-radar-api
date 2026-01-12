@@ -72,8 +72,7 @@ class GeocodingService:
                 provider=self.provider,
             )
 
-        except (GeocoderTimedOut, GeocoderServiceError) as e:
-            print(f"Geocoding error: {e}")
+        except (GeocoderTimedOut, GeocoderServiceError):
             return None
 
     def reverse_geocode(self, latitude: float, longitude: float) -> ReverseGeocodeResult | None:
@@ -106,8 +105,7 @@ class GeocodingService:
                 provider=self.provider,
             )
 
-        except (GeocoderTimedOut, GeocoderServiceError) as e:
-            print(f"Reverse geocoding error: {e}")
+        except (GeocoderTimedOut, GeocoderServiceError):
             return None
 
     def _parse_google_address(self, location) -> Address:
