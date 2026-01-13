@@ -13,7 +13,7 @@ from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference, CloseFriendStatus
+from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference
 from api.dependencies import get_current_user, limiter
 from core.config import settings
 from api.routes.websocket import manager as ws_manager
@@ -687,16 +687,16 @@ async def request_close_friend(
         )
 
     # Check current status
-    if follow.close_friend_status == CloseFriendStatus.ACCEPTED:
+    if follow.close_friend_status == 'accepted':
         raise HTTPException(status_code=400, detail="Already close friends")
 
-    if follow.close_friend_status == CloseFriendStatus.PENDING:
+    if follow.close_friend_status == 'pending':
         raise HTTPException(status_code=400, detail="Request already pending")
 
     # Set status to pending on both follow records
-    follow.close_friend_status = CloseFriendStatus.PENDING
+    follow.close_friend_status = 'pending'
     follow.close_friend_requester_id = current_user.id
-    reverse_follow.close_friend_status = CloseFriendStatus.PENDING
+    reverse_follow.close_friend_status = 'pending'
     reverse_follow.close_friend_requester_id = current_user.id
 
     await db.commit()
@@ -752,7 +752,7 @@ async def accept_close_friend(
         raise HTTPException(status_code=404, detail="Not following this user")
 
     # Check if there's a pending request from the other user
-    if follow.close_friend_status != CloseFriendStatus.PENDING:
+    if follow.close_friend_status != 'pending':
         raise HTTPException(status_code=400, detail="No pending close friend request")
 
     if follow.close_friend_requester_id == current_user.id:
@@ -768,10 +768,10 @@ async def accept_close_friend(
     reverse_follow = reverse_result.scalar_one_or_none()
 
     # Set status to accepted on both follow records
-    follow.close_friend_status = CloseFriendStatus.ACCEPTED
+    follow.close_friend_status = 'accepted'
     follow.is_close_friend = True
     if reverse_follow:
-        reverse_follow.close_friend_status = CloseFriendStatus.ACCEPTED
+        reverse_follow.close_friend_status = 'accepted'
         reverse_follow.is_close_friend = True
 
     await db.commit()
@@ -815,7 +815,7 @@ async def decline_close_friend(
         raise HTTPException(status_code=404, detail="Not following this user")
 
     # Check if there's a pending request
-    if follow.close_friend_status != CloseFriendStatus.PENDING:
+    if follow.close_friend_status != 'pending':
         raise HTTPException(status_code=400, detail="No pending close friend request")
 
     # Get reverse follow
@@ -828,10 +828,10 @@ async def decline_close_friend(
     reverse_follow = reverse_result.scalar_one_or_none()
 
     # Reset status to none on both follow records
-    follow.close_friend_status = CloseFriendStatus.NONE
+    follow.close_friend_status = 'none'
     follow.close_friend_requester_id = None
     if reverse_follow:
-        reverse_follow.close_friend_status = CloseFriendStatus.NONE
+        reverse_follow.close_friend_status = 'none'
         reverse_follow.close_friend_requester_id = None
 
     await db.commit()
@@ -874,7 +874,7 @@ async def remove_close_friend(
         raise HTTPException(status_code=404, detail="Not following this user")
 
     # Check if they are close friends or have pending request
-    if follow.close_friend_status == CloseFriendStatus.NONE:
+    if follow.close_friend_status == 'none':
         raise HTTPException(status_code=400, detail="Not close friends")
 
     # Get reverse follow
@@ -887,11 +887,11 @@ async def remove_close_friend(
     reverse_follow = reverse_result.scalar_one_or_none()
 
     # Reset status to none on both follow records
-    follow.close_friend_status = CloseFriendStatus.NONE
+    follow.close_friend_status = 'none'
     follow.close_friend_requester_id = None
     follow.is_close_friend = False
     if reverse_follow:
-        reverse_follow.close_friend_status = CloseFriendStatus.NONE
+        reverse_follow.close_friend_status = 'none'
         reverse_follow.close_friend_requester_id = None
         reverse_follow.is_close_friend = False
 
