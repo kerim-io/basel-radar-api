@@ -13,7 +13,7 @@ from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference
+from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference, CloseFriendStatus
 from api.dependencies import get_current_user, limiter
 from core.config import settings
 from api.routes.websocket import manager as ws_manager
@@ -646,16 +646,19 @@ async def unfollow_user(
     return {"status": "success"}
 
 
-@router.post("/follow/{user_id}/close-friend")
-async def toggle_close_friend(
+@router.post("/follow/{user_id}/close-friend/request")
+async def request_close_friend(
     user_id: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
     """
-    Toggle close friend status for a user you follow.
-    Close friends can only be set for mutual follows (both users follow each other).
+    Request to become close friends with a user.
+    Requires mutual follow. Sets status to 'pending' until the other user accepts.
     """
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot add yourself as close friend")
+
     # Check if current user follows target user
     result = await db.execute(
         select(Follow).where(
@@ -683,14 +686,264 @@ async def toggle_close_friend(
             detail="Close friend can only be set for mutual follows"
         )
 
-    # Toggle close friend status
-    follow.is_close_friend = not follow.is_close_friend
+    # Check current status
+    if follow.close_friend_status == CloseFriendStatus.ACCEPTED:
+        raise HTTPException(status_code=400, detail="Already close friends")
+
+    if follow.close_friend_status == CloseFriendStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request already pending")
+
+    # Set status to pending on both follow records
+    follow.close_friend_status = CloseFriendStatus.PENDING
+    follow.close_friend_requester_id = current_user.id
+    reverse_follow.close_friend_status = CloseFriendStatus.PENDING
+    reverse_follow.close_friend_requester_id = current_user.id
+
     await db.commit()
+
+    # Send WebSocket notification to the target user
+    notification_payload = {
+        "type": "close_friend_request",
+        "actor_id": current_user.id,
+        "actor_nickname": current_user.nickname or current_user.first_name or "Someone",
+        "actor_profile_picture": current_user.profile_picture or current_user.instagram_profile_pic,
+        "message": f"{current_user.nickname or current_user.first_name} wants to be close friends"
+    }
+    await ws_manager.send_to_user(user_id, notification_payload)
+
+    # Also send push notification
+    from services.apns_service import NotificationType, NotificationPayload
+    payload = NotificationPayload(
+        notification_type=NotificationType.CLOSE_FRIEND_REQUEST,
+        title="Close Friend Request",
+        body=f"{current_user.nickname or current_user.first_name} wants to be close friends",
+        actor_id=current_user.id,
+        actor_nickname=current_user.nickname or current_user.first_name or "Someone",
+        actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
+    )
+    enqueue_notification(user_id, payload_to_dict(payload))
 
     return {
         "status": "success",
         "user_id": user_id,
-        "is_close_friend": follow.is_close_friend
+        "close_friend_status": "pending"
+    }
+
+
+@router.post("/follow/{user_id}/close-friend/accept")
+async def accept_close_friend(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Accept a close friend request from another user.
+    """
+    # Check if current user follows target user
+    result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        )
+    )
+    follow = result.scalar_one_or_none()
+
+    if not follow:
+        raise HTTPException(status_code=404, detail="Not following this user")
+
+    # Check if there's a pending request from the other user
+    if follow.close_friend_status != CloseFriendStatus.PENDING:
+        raise HTTPException(status_code=400, detail="No pending close friend request")
+
+    if follow.close_friend_requester_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot accept your own request")
+
+    # Get reverse follow
+    reverse_result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == user_id,
+            Follow.following_id == current_user.id
+        )
+    )
+    reverse_follow = reverse_result.scalar_one_or_none()
+
+    # Set status to accepted on both follow records
+    follow.close_friend_status = CloseFriendStatus.ACCEPTED
+    follow.is_close_friend = True
+    if reverse_follow:
+        reverse_follow.close_friend_status = CloseFriendStatus.ACCEPTED
+        reverse_follow.is_close_friend = True
+
+    await db.commit()
+
+    # Send WebSocket notification to the requester
+    notification_payload = {
+        "type": "close_friend_accepted",
+        "actor_id": current_user.id,
+        "actor_nickname": current_user.nickname or current_user.first_name or "Someone",
+        "actor_profile_picture": current_user.profile_picture or current_user.instagram_profile_pic,
+        "message": f"{current_user.nickname or current_user.first_name} accepted your close friend request"
+    }
+    await ws_manager.send_to_user(user_id, notification_payload)
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "close_friend_status": "accepted"
+    }
+
+
+@router.post("/follow/{user_id}/close-friend/decline")
+async def decline_close_friend(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Decline a close friend request from another user.
+    """
+    # Check if current user follows target user
+    result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        )
+    )
+    follow = result.scalar_one_or_none()
+
+    if not follow:
+        raise HTTPException(status_code=404, detail="Not following this user")
+
+    # Check if there's a pending request
+    if follow.close_friend_status != CloseFriendStatus.PENDING:
+        raise HTTPException(status_code=400, detail="No pending close friend request")
+
+    # Get reverse follow
+    reverse_result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == user_id,
+            Follow.following_id == current_user.id
+        )
+    )
+    reverse_follow = reverse_result.scalar_one_or_none()
+
+    # Reset status to none on both follow records
+    follow.close_friend_status = CloseFriendStatus.NONE
+    follow.close_friend_requester_id = None
+    if reverse_follow:
+        reverse_follow.close_friend_status = CloseFriendStatus.NONE
+        reverse_follow.close_friend_requester_id = None
+
+    await db.commit()
+
+    # Send WebSocket notification to the requester
+    notification_payload = {
+        "type": "close_friend_declined",
+        "actor_id": current_user.id,
+        "actor_nickname": current_user.nickname or current_user.first_name or "Someone",
+        "message": f"{current_user.nickname or current_user.first_name} declined your close friend request"
+    }
+    await ws_manager.send_to_user(user_id, notification_payload)
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "close_friend_status": "none"
+    }
+
+
+@router.delete("/follow/{user_id}/close-friend")
+async def remove_close_friend(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Remove close friend status. When either user removes, it removes for both.
+    """
+    # Check if current user follows target user
+    result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        )
+    )
+    follow = result.scalar_one_or_none()
+
+    if not follow:
+        raise HTTPException(status_code=404, detail="Not following this user")
+
+    # Check if they are close friends or have pending request
+    if follow.close_friend_status == CloseFriendStatus.NONE:
+        raise HTTPException(status_code=400, detail="Not close friends")
+
+    # Get reverse follow
+    reverse_result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == user_id,
+            Follow.following_id == current_user.id
+        )
+    )
+    reverse_follow = reverse_result.scalar_one_or_none()
+
+    # Reset status to none on both follow records
+    follow.close_friend_status = CloseFriendStatus.NONE
+    follow.close_friend_requester_id = None
+    follow.is_close_friend = False
+    if reverse_follow:
+        reverse_follow.close_friend_status = CloseFriendStatus.NONE
+        reverse_follow.close_friend_requester_id = None
+        reverse_follow.is_close_friend = False
+
+    await db.commit()
+
+    # Send WebSocket notification to the other user
+    notification_payload = {
+        "type": "close_friend_removed",
+        "actor_id": current_user.id,
+        "actor_nickname": current_user.nickname or current_user.first_name or "Someone",
+        "message": f"{current_user.nickname or current_user.first_name} removed you as close friend"
+    }
+    await ws_manager.send_to_user(user_id, notification_payload)
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "close_friend_status": "none"
+    }
+
+
+@router.get("/follow/{user_id}/close-friend/status")
+async def get_close_friend_status(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get the close friend status between current user and target user.
+    """
+    # Check if current user follows target user
+    result = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        )
+    )
+    follow = result.scalar_one_or_none()
+
+    if not follow:
+        return {
+            "user_id": user_id,
+            "close_friend_status": "none",
+            "requester_id": None,
+            "is_requester": False
+        }
+
+    return {
+        "user_id": user_id,
+        "close_friend_status": follow.close_friend_status.value,
+        "requester_id": follow.close_friend_requester_id,
+        "is_requester": follow.close_friend_requester_id == current_user.id
     }
 
 

@@ -1,9 +1,17 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Text, UniqueConstraint, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
 import uuid
+import enum
+
+
+class CloseFriendStatus(str, enum.Enum):
+    """Status of close friend relationship"""
+    NONE = "none"
+    PENDING = "pending"
+    ACCEPTED = "accepted"
 
 
 class User(Base):
@@ -67,12 +75,15 @@ class Follow(Base):
     id = Column(Integer, primary_key=True, index=True)
     follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     following_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    is_close_friend = Column(Boolean, default=False, nullable=False)
+    is_close_friend = Column(Boolean, default=False, nullable=False)  # Legacy - keeping for backwards compatibility
+    close_friend_status = Column(SQLEnum(CloseFriendStatus), default=CloseFriendStatus.NONE, nullable=False)
+    close_friend_requester_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     follower = relationship("User", foreign_keys=[follower_id], back_populates="following")
     following = relationship("User", foreign_keys=[following_id], back_populates="followers")
+    close_friend_requester = relationship("User", foreign_keys=[close_friend_requester_id])
 
 
 class DeviceToken(Base):

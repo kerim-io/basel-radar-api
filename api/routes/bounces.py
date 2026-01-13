@@ -872,6 +872,19 @@ async def remove_invite(
 
     logger.info(f"Invite removed: bounce {bounce_id}, user {user_id}, by {current_user.id}")
 
+    # Notify the bounce creator that an attendee left (don't send bounce_deleted!)
+    if bounce.creator_id in manager.active_connections:
+        for conn in manager.active_connections[bounce.creator_id]:
+            try:
+                await conn.send_json({
+                    "type": "bounce_attendee_update",
+                    "bounce_id": bounce_id,
+                    "user_id": user_id,
+                    "action": "left"
+                })
+            except Exception:
+                pass
+
     return {"success": True, "message": "Invite removed"}
 
 
