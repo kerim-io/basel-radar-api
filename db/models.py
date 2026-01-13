@@ -76,7 +76,7 @@ class Follow(Base):
     follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     following_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     is_close_friend = Column(Boolean, default=False, nullable=False)  # Legacy - keeping for backwards compatibility
-    close_friend_status = Column(SQLEnum(CloseFriendStatus), default=CloseFriendStatus.NONE, nullable=False)
+    close_friend_status = Column(SQLEnum(CloseFriendStatus, name='close_friend_status', create_type=False), default=CloseFriendStatus.NONE, nullable=False)
     close_friend_requester_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
