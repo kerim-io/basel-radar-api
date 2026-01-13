@@ -25,6 +25,7 @@ class NotificationType(str, Enum):
     FRIEND_AT_VENUE = "friend_at_venue"
     FRIEND_LEFT_VENUE = "friend_left_venue"
     CLOSE_FRIEND_CHECKIN = "close_friend_checkin"
+    CLOSE_FRIEND_REQUEST = "close_friend_request"
 
 
 @dataclass
