@@ -941,7 +941,7 @@ async def get_close_friend_status(
 
     return {
         "user_id": user_id,
-        "close_friend_status": follow.close_friend_status.value,
+        "close_friend_status": follow.close_friend_status,
         "requester_id": follow.close_friend_requester_id,
         "is_requester": follow.close_friend_requester_id == current_user.id
     }
