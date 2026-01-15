@@ -23,7 +23,7 @@ class Settings:
     # Apple Sign In
     APPLE_TEAM_ID: str = os.getenv("APPLE_TEAM_ID", "")
     APPLE_KEY_ID: str = os.getenv("APPLE_KEY_ID", "")
-    APPLE_CLIENT_ID: str = os.getenv("APPLE_CLIENT_ID", "com.yourapp.artbasel")
+    APPLE_CLIENT_ID: str = os.getenv("APPLE_CLIENT_ID", "com.theappagency.lit")
     APPLE_REDIRECT_URI: str = os.getenv("APPLE_REDIRECT_URI", "https://yourapp.com/auth/callback")
 
     # Geofence
@@ -51,7 +51,7 @@ class Settings:
     APNS_KEY_BASE64: str = os.getenv("APNS_KEY_BASE64", "") or os.getenv("APPLE_KEY_BASE64", "")
     APNS_KEY_ID: str = os.getenv("APNS_KEY_ID", "")  # Key ID from Apple Developer
     APNS_TEAM_ID: str = os.getenv("APNS_TEAM_ID", "") or os.getenv("APPLE_TEAM_ID", "")  # Team ID
-    APNS_BUNDLE_ID: str = os.getenv("APNS_BUNDLE_ID", "com.bitbasel.baselradar")  # App bundle ID
+    APNS_BUNDLE_ID: str = os.getenv("APNS_BUNDLE_ID", "com.theappagency.lit")  # App bundle ID
     APNS_USE_SANDBOX: bool = os.getenv("APNS_USE_SANDBOX", "false").lower() == "true"
 
 settings = Settings()
