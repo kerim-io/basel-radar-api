@@ -29,24 +29,46 @@ def get_notification_queue() -> Queue:
 
 def enqueue_notification(user_id: int, payload_dict: Dict[str, Any]) -> None:
     """
-    Enqueue a notification to be sent in the background.
+    Send a push notification directly (no queue).
 
     Args:
         user_id: Target user ID
         payload_dict: Serialized NotificationPayload as dict
     """
+    # Send APNs notification directly in a background task
+    asyncio.create_task(_send_apns_direct(user_id, payload_dict))
+
+
+async def _send_apns_direct(user_id: int, payload_dict: Dict[str, Any]) -> None:
+    """Send APNs notification directly without queue"""
+    from services.apns_service import get_apns_service, NotificationPayload, NotificationType
+    from db.database import get_session_maker
+
     try:
-        queue = get_notification_queue()
-        queue.enqueue(
-            'services.tasks.send_notification_task',
-            user_id,
-            payload_dict,
-            job_timeout=30,  # 30 second timeout per notification
-            retry=Retry(max=3),  # Retry up to 3 times on failure
-        )
-        logger.debug(f"Enqueued notification for user {user_id}")
+        session_maker = get_session_maker()
+        async with session_maker() as db:
+            payload = NotificationPayload(
+                notification_type=NotificationType(payload_dict['notification_type']),
+                title=payload_dict['title'],
+                body=payload_dict['body'],
+                actor_id=payload_dict['actor_id'],
+                actor_nickname=payload_dict['actor_nickname'],
+                actor_profile_picture=payload_dict.get('actor_profile_picture'),
+                bounce_id=payload_dict.get('bounce_id'),
+                bounce_venue_name=payload_dict.get('bounce_venue_name'),
+                bounce_place_id=payload_dict.get('bounce_place_id'),
+                venue_place_id=payload_dict.get('venue_place_id'),
+                venue_name=payload_dict.get('venue_name'),
+                venue_latitude=payload_dict.get('venue_latitude'),
+                venue_longitude=payload_dict.get('venue_longitude'),
+            )
+
+            apns = await get_apns_service()
+            result = await apns.send_notification(db, user_id, payload)
+            logger.info(f"APNs notification sent to user {user_id}: {result}")
+
     except Exception as e:
-        logger.error(f"Failed to enqueue notification for user {user_id}: {e}")
+        logger.error(f"Failed to send APNs notification to user {user_id}: {e}")
 
 
 def enqueue_notifications_bulk(user_ids: list, payload_dict: Dict[str, Any]) -> None:

@@ -194,13 +194,14 @@ class APNsService:
         """Send push notification to a user's devices"""
 
         if not self._client:
-            logger.debug("APNs client not initialized - skipping push")
+            logger.warning("APNs client not initialized - skipping push")
             return False
 
         tokens = await self._get_user_tokens(db, user_id, payload.notification_type)
+        logger.info(f"APNs: Found {len(tokens)} token(s) for user {user_id}")
 
         if not tokens:
-            logger.debug(f"No active tokens for user {user_id} or notification disabled")
+            logger.warning(f"APNs: No active tokens for user {user_id} or notification disabled")
             return False
 
         aps_payload = self._build_aps_payload(payload)

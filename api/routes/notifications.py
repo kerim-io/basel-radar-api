@@ -1,6 +1,7 @@
 """
 Notification API endpoints for device token management and preferences
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -12,6 +13,7 @@ from db.database import get_async_session
 from db.models import DeviceToken, NotificationPreference, User
 from api.dependencies import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
@@ -89,6 +91,7 @@ async def register_device_token(
         db.add(device_token)
 
     await db.commit()
+    logger.info(f"Device token registered for user {current_user.id}: {request.device_token[:20]}... (sandbox={request.is_sandbox})")
     return {"status": "success", "message": "Device token registered"}
 
 
