@@ -33,7 +33,7 @@ class ConnectionManager:
             try:
                 channel = REDIS_CHANNEL_USER.format(user_id=user_id)
                 await self._pubsub.subscribe(channel)
-                logger.info(f"Subscribed to Redis channel for user {user_id}")
+                logger.debug(f"Subscribed to Redis channel for user {user_id}")
             except Exception as e:
                 logger.warning(f"Failed to subscribe to user channel: {e}")
 
@@ -52,7 +52,7 @@ class ConnectionManager:
         try:
             channel = REDIS_CHANNEL_USER.format(user_id=user_id)
             await self._pubsub.unsubscribe(channel)
-            logger.info(f"Unsubscribed from Redis channel for user {user_id}")
+            logger.debug(f"Unsubscribed from Redis channel for user {user_id}")
         except Exception as e:
             logger.warning(f"Failed to unsubscribe from user channel: {e}")
 
@@ -167,7 +167,7 @@ async def notifications_websocket(
         return
 
     await manager.connect(websocket, user_id)
-    logger.info(f"WebSocket connected: user {user_id}")
+    logger.debug(f"WebSocket connected: user {user_id}")
 
     try:
         await websocket.send_json({"type": "connected", "user_id": user_id})
@@ -177,7 +177,7 @@ async def notifications_websocket(
             if data == "ping":
                 await websocket.send_text("pong")
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: user {user_id}")
+        logger.debug(f"WebSocket disconnected: user {user_id}")
     except Exception as e:
         logger.error(f"WebSocket error for user {user_id}: {e}")
     finally:
