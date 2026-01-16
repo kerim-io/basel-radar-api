@@ -1,21 +1,32 @@
 """
 Apple Push Notification Service (APNs) handler for Basel Radar
+Uses httpx with HTTP/2 to avoid uvloop compatibility issues with aioapns
 """
 import base64
+import json
 import logging
+import time
 from typing import Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import httpx
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, update
-from sqlalchemy.sql import func
 
 from core.config import settings
 from db.models import DeviceToken, NotificationPreference
 
 logger = logging.getLogger(__name__)
+
+# APNs endpoints
+APNS_PRODUCTION_URL = "https://api.push.apple.com"
+APNS_SANDBOX_URL = "https://api.sandbox.push.apple.com"
 
 
 class NotificationType(str, Enum):
@@ -48,11 +59,14 @@ class NotificationPayload:
 
 
 class APNsService:
-    """Apple Push Notification Service handler"""
+    """Apple Push Notification Service handler using httpx HTTP/2"""
 
     _instance: Optional['APNsService'] = None
-    _client = None
+    _private_key = None
+    _token: Optional[str] = None
+    _token_timestamp: float = 0
     _initialized: bool = False
+    _client: Optional[httpx.AsyncClient] = None
 
     @classmethod
     async def get_instance(cls) -> 'APNsService':
@@ -63,38 +77,55 @@ class APNsService:
         return cls._instance
 
     async def _initialize(self):
-        """Initialize APNs client with credentials"""
+        """Initialize APNs with credentials"""
         if not settings.APNS_KEY_BASE64:
             logger.warning("APNs key not configured - push notifications disabled")
             self._initialized = True
             return
 
         try:
-            from aioapns import APNs
-            import tempfile
-            import os
+            # Decode base64 key
+            key_data = base64.b64decode(settings.APNS_KEY_BASE64)
 
-            # Decode base64 key to string
-            key_data = base64.b64decode(settings.APNS_KEY_BASE64).decode('utf-8')
-
-            # Write key to temporary file (aioapns expects a file path)
-            self._key_file = tempfile.NamedTemporaryFile(mode='w', suffix='.p8', delete=False)
-            self._key_file.write(key_data)
-            self._key_file.close()
-
-            self._client = APNs(
-                key=self._key_file.name,
-                key_id=settings.APNS_KEY_ID,
-                team_id=settings.APNS_TEAM_ID,
-                topic=settings.APNS_BUNDLE_ID,
-                use_sandbox=settings.APNS_USE_SANDBOX,
+            # Load the private key
+            self._private_key = serialization.load_pem_private_key(
+                key_data,
+                password=None,
+                backend=default_backend()
             )
+
+            # Create HTTP/2 client
+            self._client = httpx.AsyncClient(http2=True, timeout=30.0)
+
             self._initialized = True
-            logger.info(f"APNs client initialized (sandbox={settings.APNS_USE_SANDBOX})")
+            logger.info(f"APNs service initialized (sandbox={settings.APNS_USE_SANDBOX})")
         except Exception as e:
-            logger.error(f"Failed to initialize APNs client: {e}")
-            self._client = None
+            logger.error(f"Failed to initialize APNs service: {e}")
+            self._private_key = None
             self._initialized = True
+
+    def _get_jwt_token(self) -> str:
+        """Get or refresh JWT token for APNs authentication"""
+        # Token is valid for 1 hour, refresh every 50 minutes
+        current_time = time.time()
+        if self._token and (current_time - self._token_timestamp) < 3000:
+            return self._token
+
+        # Create new token
+        token_payload = {
+            "iss": settings.APNS_TEAM_ID,
+            "iat": int(current_time)
+        }
+
+        self._token = jwt.encode(
+            token_payload,
+            self._private_key,
+            algorithm="ES256",
+            headers={"kid": settings.APNS_KEY_ID}
+        )
+        self._token_timestamp = current_time
+        logger.debug("Generated new APNs JWT token")
+        return self._token
 
     def _notification_type_to_preference_field(self, notification_type: NotificationType) -> str:
         """Map notification type to preference field name"""
@@ -192,6 +223,43 @@ class APNsService:
             "data": custom_data
         }
 
+    async def _send_to_token(self, token: str, aps_payload: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """Send notification to a single device token"""
+        if not self._client or not self._private_key:
+            return False, "APNs not initialized"
+
+        base_url = APNS_SANDBOX_URL if settings.APNS_USE_SANDBOX else APNS_PRODUCTION_URL
+        url = f"{base_url}/3/device/{token}"
+
+        headers = {
+            "authorization": f"bearer {self._get_jwt_token()}",
+            "apns-topic": settings.APNS_BUNDLE_ID,
+            "apns-push-type": "alert",
+            "apns-priority": "10",
+        }
+
+        try:
+            response = await self._client.post(
+                url,
+                json=aps_payload,
+                headers=headers
+            )
+
+            if response.status_code == 200:
+                return True, None
+            else:
+                # Parse error response
+                try:
+                    error_data = response.json()
+                    reason = error_data.get("reason", "Unknown")
+                except:
+                    reason = f"HTTP {response.status_code}"
+                return False, reason
+
+        except Exception as e:
+            logger.error(f"HTTP error sending to APNs: {e}")
+            return False, str(e)
+
     async def send_notification(
         self,
         db: AsyncSession,
@@ -200,8 +268,8 @@ class APNsService:
     ) -> bool:
         """Send push notification to a user's devices"""
 
-        if not self._client:
-            logger.warning("APNs client not initialized - skipping push")
+        if not self._private_key:
+            logger.warning("APNs not initialized - skipping push")
             return False
 
         tokens = await self._get_user_tokens(db, user_id, payload.notification_type)
@@ -213,42 +281,31 @@ class APNsService:
 
         aps_payload = self._build_aps_payload(payload)
 
-        from aioapns import NotificationRequest, PushType
-
         success = False
         for token in tokens:
-            try:
-                request = NotificationRequest(
-                    device_token=token,
-                    message=aps_payload,
-                    push_type=PushType.ALERT,
+            sent, error = await self._send_to_token(token, aps_payload)
+
+            if sent:
+                logger.info(f"Push sent to user {user_id}, token {token[:20]}...")
+                success = True
+
+                # Update last_used_at
+                await db.execute(
+                    update(DeviceToken)
+                    .where(DeviceToken.device_token == token)
+                    .values(last_used_at=datetime.now(timezone.utc))
                 )
-                response = await self._client.send_notification(request)
+            else:
+                logger.warning(f"Push failed for user {user_id}: {error}")
 
-                if response.is_successful:
-                    logger.info(f"Push sent to user {user_id}, token {token[:20]}...")
-                    success = True
-
-                    # Update last_used_at
+                # Handle invalid tokens
+                if error in ['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']:
                     await db.execute(
                         update(DeviceToken)
                         .where(DeviceToken.device_token == token)
-                        .values(last_used_at=datetime.now(timezone.utc))
+                        .values(is_active=False)
                     )
-                else:
-                    logger.warning(f"Push failed for user {user_id}: {response.description}")
-
-                    # Handle invalid tokens
-                    if response.description in ['BadDeviceToken', 'Unregistered']:
-                        await db.execute(
-                            update(DeviceToken)
-                            .where(DeviceToken.device_token == token)
-                            .values(is_active=False)
-                        )
-                        logger.info(f"Deactivated invalid token for user {user_id}")
-
-            except Exception as e:
-                logger.error(f"Failed to send push to user {user_id}, token {token[:20]}...: {e}")
+                    logger.info(f"Deactivated invalid token for user {user_id}")
 
         await db.commit()
         return success
