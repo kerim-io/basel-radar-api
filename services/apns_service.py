@@ -86,7 +86,9 @@ class APNsService:
         try:
             # Decode base64 key (strip whitespace that Railway might add)
             key_b64 = settings.APNS_KEY_BASE64.strip().replace(" ", "").replace("\n", "")
+            logger.info(f"APNs key length: {len(key_b64)}, starts with: {key_b64[:20]}...")
             key_data = base64.b64decode(key_b64)
+            logger.info(f"Decoded key length: {len(key_data)}, starts with: {key_data[:30]}...")
 
             # Load the private key
             self._private_key = serialization.load_pem_private_key(
