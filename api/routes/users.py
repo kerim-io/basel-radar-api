@@ -9,11 +9,11 @@ import uuid
 import os
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from math import radians, cos, sin, asin, sqrt
 
 from db.database import get_async_session
-from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference
+from db.models import User, Follow, RefreshToken, DeviceToken, NotificationPreference, CheckIn
 from api.dependencies import get_current_user, limiter
 from core.config import settings
 from api.routes.websocket import manager as ws_manager
@@ -1476,8 +1476,10 @@ async def delete_account(
     1. Deletes all follows (as follower and following)
     2. Deletes all refresh tokens
     3. Deletes all device tokens (push notifications)
-    4. Deletes profile picture file from disk
-    5. Deletes user account
+    4. Deletes notification preferences
+    5. Broadcasts checkout notification if user was checked in (so other users' maps update)
+    6. Deletes profile picture file from disk
+    7. Deletes user account (check-in deleted by CASCADE)
 
     All operations are performed in a transaction with rollback on failure.
     """
@@ -1521,7 +1523,27 @@ async def delete_account(
             delete(NotificationPreference).where(NotificationPreference.user_id == current_user.id)
         )
 
-        # 5. Delete profile picture file
+        # 5. Check for active check-in and broadcast checkout notification
+        checkin_result = await db.execute(
+            select(CheckIn).where(CheckIn.user_id == current_user.id)
+        )
+        active_checkin = checkin_result.scalar_one_or_none()
+        if active_checkin:
+            # Broadcast checkout to all connected clients before deleting
+            await ws_manager.broadcast({
+                "type": "venue_checkout",
+                "place_id": active_checkin.place_id,
+                "venue_name": active_checkin.venue_name,
+                "user_id": current_user.id,
+                "nickname": current_user.nickname,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            logger.info(
+                "Broadcast checkout for deleted user",
+                extra={"user_id": user_id, "place_id": active_checkin.place_id}
+            )
+
+        # 6. Delete profile picture file
         if current_user.profile_picture:
             profile_pic_path = Path(settings.UPLOAD_DIR) / current_user.profile_picture.lstrip("/files/")
             if profile_pic_path.exists():
@@ -1531,7 +1553,7 @@ async def delete_account(
                 except Exception as e:
                     logger.warning("Failed to delete profile picture", extra={"profile_pic_path": str(profile_pic_path), "error": str(e)})
 
-        # 6. Delete user account
+        # 7. Delete user account
         await db.delete(current_user)
 
         # Commit all changes
