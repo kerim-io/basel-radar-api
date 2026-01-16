@@ -37,6 +37,7 @@ class NotificationType(str, Enum):
     FRIEND_LEFT_VENUE = "friend_left_venue"
     CLOSE_FRIEND_CHECKIN = "close_friend_checkin"
     CLOSE_FRIEND_REQUEST = "close_friend_request"
+    CLOSE_FRIEND_ACCEPTED = "close_friend_accepted"
     LOCATION_SHARE = "location_share"
 
 

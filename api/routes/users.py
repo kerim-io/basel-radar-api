@@ -587,23 +587,26 @@ async def follow_user(
     from services.apns_service import NotificationPayload, NotificationType
     from services.tasks import send_websocket_notification
 
+    actor_name = current_user.nickname or current_user.first_name or "Someone"
+    actor_pic = current_user.profile_picture or current_user.instagram_profile_pic
+
     if is_follow_back:
         payload = NotificationPayload(
             notification_type=NotificationType.FOLLOW_BACK,
-            title="New Follow Back",
-            body=f"{current_user.nickname or current_user.first_name} followed you back",
+            title=actor_name,
+            body="followed you back",
             actor_id=current_user.id,
-            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
-            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
+            actor_nickname=actor_name,
+            actor_profile_picture=actor_pic
         )
     else:
         payload = NotificationPayload(
             notification_type=NotificationType.NEW_FOLLOWER,
-            title="New Follower",
-            body=f"{current_user.nickname or current_user.first_name} started following you",
+            title=actor_name,
+            body="started following you",
             actor_id=current_user.id,
-            actor_nickname=current_user.nickname or current_user.first_name or "Someone",
-            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
+            actor_nickname=actor_name,
+            actor_profile_picture=actor_pic
         )
 
     payload_dict = payload_to_dict(payload)
@@ -702,12 +705,15 @@ async def request_close_friend(
     await db.commit()
 
     # Send WebSocket notification to the target user
+    actor_name = current_user.nickname or current_user.first_name or "Someone"
+    actor_pic = current_user.profile_picture or current_user.instagram_profile_pic
+
     notification_payload = {
         "type": "close_friend_request",
         "actor_id": current_user.id,
-        "actor_nickname": current_user.nickname or current_user.first_name or "Someone",
-        "actor_profile_picture": current_user.profile_picture or current_user.instagram_profile_pic,
-        "message": f"{current_user.nickname or current_user.first_name} wants to be close friends"
+        "actor_nickname": actor_name,
+        "actor_profile_picture": actor_pic,
+        "message": f"{actor_name} wants to be close friends"
     }
     await ws_manager.send_to_user(user_id, notification_payload)
 
@@ -715,11 +721,11 @@ async def request_close_friend(
     from services.apns_service import NotificationType, NotificationPayload
     payload = NotificationPayload(
         notification_type=NotificationType.CLOSE_FRIEND_REQUEST,
-        title="Close Friend Request",
-        body=f"{current_user.nickname or current_user.first_name} wants to be close friends",
+        title=actor_name,
+        body="wants to be close friends",
         actor_id=current_user.id,
-        actor_nickname=current_user.nickname or current_user.first_name or "Someone",
-        actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic
+        actor_nickname=actor_name,
+        actor_profile_picture=actor_pic
     )
     enqueue_notification(user_id, payload_to_dict(payload))
 
@@ -777,14 +783,29 @@ async def accept_close_friend(
     await db.commit()
 
     # Send WebSocket notification to the requester
+    actor_name = current_user.nickname or current_user.first_name or "Someone"
+    actor_pic = current_user.profile_picture or current_user.instagram_profile_pic
+
     notification_payload = {
         "type": "close_friend_accepted",
         "actor_id": current_user.id,
-        "actor_nickname": current_user.nickname or current_user.first_name or "Someone",
-        "actor_profile_picture": current_user.profile_picture or current_user.instagram_profile_pic,
-        "message": f"{current_user.nickname or current_user.first_name} accepted your close friend request"
+        "actor_nickname": actor_name,
+        "actor_profile_picture": actor_pic,
+        "message": f"{actor_name} accepted your close friend request"
     }
     await ws_manager.send_to_user(user_id, notification_payload)
+
+    # Send push notification
+    from services.apns_service import NotificationType, NotificationPayload
+    payload = NotificationPayload(
+        notification_type=NotificationType.CLOSE_FRIEND_ACCEPTED,
+        title=actor_name,
+        body="accepted your close friend request",
+        actor_id=current_user.id,
+        actor_nickname=actor_name,
+        actor_profile_picture=actor_pic
+    )
+    enqueue_notification(user_id, payload_to_dict(payload))
 
     return {
         "status": "success",
