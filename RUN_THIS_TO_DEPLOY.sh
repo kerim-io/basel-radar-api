@@ -85,7 +85,7 @@ railway variables set REFRESH_TOKEN_EXPIRE_DAYS="7"
 railway variables set UPLOAD_DIR="uploads"
 railway variables set MAX_FILE_SIZE="10485760"
 railway variables set APPLE_TEAM_ID="GDZ9V6T9SF"
-railway variables set APPLE_KEY_ID="5Y3L2S8R8R"
+railway variables set APPLE_KEY_ID="J67ZY799AV"
 
 railway variables set BASEL_RADIUS_KM="5"
 

@@ -17,8 +17,10 @@ from services.auth_service import (
 from services.apple_auth import verify_apple_token
 from core.config import settings
 from api.dependencies import limiter, get_current_user
+import logging
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 class AppleAuthRequest(BaseModel):
@@ -126,6 +128,7 @@ async def apple_signin(
         )
 
     except Exception as e:
+        logger.error(f"Apple authentication failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Apple authentication failed: {str(e)}"

@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, or_, func
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 import aiofiles
 from pathlib import Path
 import uuid
 import os
 import hashlib
 import logging
+import base64
 from datetime import datetime, timezone
 from math import radians, cos, sin, asin, sqrt
 
@@ -72,7 +73,10 @@ class ProfileResponse(BaseModel):
     employer: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-    profile_picture: Optional[str] = None
+    profile_picture: Optional[str] = None  # Legacy field
+    profile_picture_1: Optional[str] = None  # Base64 encoded image
+    profile_picture_2: Optional[str] = None  # Base64 encoded image
+    profile_picture_3: Optional[str] = None  # Base64 encoded image
     has_profile: bool = False
     # Privacy flags (only returned for own profile)
     phone_visible: Optional[bool] = None
@@ -110,7 +114,10 @@ class SimpleUserResponse(BaseModel):
     nickname: Optional[str]
     first_name: Optional[str]
     last_name: Optional[str]
-    profile_picture: Optional[str]
+    profile_picture: Optional[str]  # Legacy field
+    profile_picture_1: Optional[str] = None
+    profile_picture_2: Optional[str] = None
+    profile_picture_3: Optional[str] = None
     employer: Optional[str]
     instagram_handle: Optional[str] = None
     is_close_friend: bool = False
@@ -485,10 +492,11 @@ async def lookup_instagram_profile(
 async def upload_profile_picture(
     request: Request,
     file: UploadFile = File(...),
+    slot: Literal[1, 2, 3] = Query(1, description="Profile picture slot (1, 2, or 3)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session)
 ):
-    """Upload profile picture (multipart/form-data)"""
+    """Upload profile picture to a specific slot (1, 2, or 3). Stored as base64 in database."""
     # Validate file type
     allowed_types = ["image/jpeg", "image/jpg", "image/png", "image/webp"]
     if file.content_type not in allowed_types:
@@ -502,26 +510,48 @@ async def upload_profile_picture(
             detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE} bytes"
         )
 
-    # Generate unique filename
-    ext = Path(file.filename).suffix if file.filename else ".jpg"
-    filename = f"profile_{current_user.id}_{uuid.uuid4().hex[:8]}{ext}"
+    # Encode to base64 with data URI prefix
+    content_type = file.content_type or "image/jpeg"
+    base64_data = base64.b64encode(content).decode('utf-8')
+    data_uri = f"data:{content_type};base64,{base64_data}"
 
-    # Save to uploads directory
-    upload_dir = Path(settings.UPLOAD_DIR) / "profile_pictures"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / filename
+    # Store in the appropriate slot
+    if slot == 1:
+        current_user.profile_picture_1 = data_uri
+    elif slot == 2:
+        current_user.profile_picture_2 = data_uri
+    else:
+        current_user.profile_picture_3 = data_uri
 
-    async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
-
-    # Update user profile picture URL
-    profile_picture_url = f"/files/profile_pictures/{filename}"
-    current_user.profile_picture = profile_picture_url
     await db.commit()
 
     return {
         "success": True,
-        "profile_picture_url": profile_picture_url
+        "slot": slot,
+        "message": f"Profile picture uploaded to slot {slot}"
+    }
+
+
+@router.delete("/me/profile-picture/{slot}")
+async def delete_profile_picture(
+    slot: Literal[1, 2, 3],
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Delete a profile picture from a specific slot (1, 2, or 3)."""
+    if slot == 1:
+        current_user.profile_picture_1 = None
+    elif slot == 2:
+        current_user.profile_picture_2 = None
+    else:
+        current_user.profile_picture_3 = None
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "slot": slot,
+        "message": f"Profile picture removed from slot {slot}"
     }
 
 

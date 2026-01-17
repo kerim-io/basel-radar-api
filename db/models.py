@@ -27,7 +27,10 @@ class User(Base):
     employer = Column(String(200), nullable=True)
     phone = Column(String(20), nullable=True)
     email = Column(String(255), nullable=True)
-    profile_picture = Column(String, nullable=True)
+    profile_picture = Column(String, nullable=True)  # Legacy - kept for backwards compatibility
+    profile_picture_1 = Column(Text, nullable=True)  # Base64 encoded image
+    profile_picture_2 = Column(Text, nullable=True)  # Base64 encoded image
+    profile_picture_3 = Column(Text, nullable=True)  # Base64 encoded image
     instagram_handle = Column(String(30), nullable=True, index=True)
 
     # Privacy settings for Art Basel Miami access control

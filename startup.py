@@ -6,19 +6,15 @@ Handles:
 - Uvicorn server launch
 """
 
+import base64
 import os
 import sys
-import base64
 from pathlib import Path
 
 
 def setup_directories():
     """Create necessary directories if they don't exist"""
-    directories = [
-        "uploads",
-        "uploads/profile_pictures",
-        "keys"
-    ]
+    directories = ["uploads", "uploads/profile_pictures", "keys"]
 
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
@@ -28,9 +24,11 @@ def setup_directories():
 def setup_apple_private_key():
     """
     Decode Apple Sign-In private key from base64 environment variable
-    and write to keys/5Y3L2S8R8R.p8
+    and write to keys/J67ZY799AV.p8
     """
-    apple_key_base64 = os.getenv("APPLE_KEY_BASE64") or os.getenv("APPLE_PRIVATE_KEY_BASE64")
+    apple_key_base64 = os.getenv("APPLE_KEY_BASE64") or os.getenv(
+        "APPLE_PRIVATE_KEY_BASE64"
+    )
 
     if not apple_key_base64:
         print("⚠️  WARNING: APPLE_KEY_BASE64 not found in environment")
@@ -42,7 +40,7 @@ def setup_apple_private_key():
         key_content = base64.b64decode(apple_key_base64)
 
         # Write to file
-        key_path = Path("keys/5Y3L2S8R8R.p8")
+        key_path = Path("keys/J67ZY799AV.p8")
         key_path.write_bytes(key_content)
 
         # Set proper permissions (read-only for owner)
@@ -82,11 +80,7 @@ def main():
 
     try:
         uvicorn.run(
-            "main:app",
-            host="0.0.0.0",
-            port=port,
-            log_level="info",
-            access_log=True
+            "main:app", host="0.0.0.0", port=port, log_level="info", access_log=True
         )
     except KeyboardInterrupt:
         print("\n⏹️  Shutting down...")

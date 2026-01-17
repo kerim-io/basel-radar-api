@@ -1,5 +1,8 @@
 import httpx
+import logging
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 async def verify_apple_token(code: str, redirect_uri: str) -> dict:
@@ -7,20 +10,30 @@ async def verify_apple_token(code: str, redirect_uri: str) -> dict:
     Verify Apple authorization code and get user info
     Returns dict with user_id and optional email
     """
+    logger.info(f"Verifying Apple token with redirect_uri: {redirect_uri}")
     url = "https://appleid.apple.com/auth/token"
+
+    try:
+        client_secret = await generate_client_secret()
+    except Exception as e:
+        logger.error(f"Failed to generate client secret: {e}")
+        raise
 
     data = {
         "client_id": settings.APPLE_CLIENT_ID,
-        "client_secret": await generate_client_secret(),
+        "client_secret": client_secret,
         "code": code,
         "grant_type": "authorization_code",
         "redirect_uri": redirect_uri
     }
 
+    logger.info(f"Sending request to Apple with client_id: {settings.APPLE_CLIENT_ID}")
+
     async with httpx.AsyncClient() as client:
         response = await client.post(url, data=data)
 
         if response.status_code != 200:
+            logger.error(f"Apple auth failed with status {response.status_code}: {response.text}")
             raise Exception(f"Apple auth failed: {response.text}")
 
         token_data = response.json()
@@ -51,11 +64,16 @@ async def generate_client_secret() -> str:
     base_dir = Path(__file__).parent.parent
     key_path = base_dir / "keys" / f"{settings.APPLE_KEY_ID}.p8"
 
+    logger.info(f"Looking for Apple key at: {key_path}")
+
     if not key_path.exists():
+        logger.error(f"Apple private key not found at {key_path}")
         raise FileNotFoundError(f"Apple private key not found at {key_path}")
 
     with open(key_path, "r") as f:
         private_key = f.read()
+
+    logger.info(f"Loaded Apple key, length: {len(private_key)} chars")
 
     headers = {
         "kid": settings.APPLE_KEY_ID,

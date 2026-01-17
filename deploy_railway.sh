@@ -85,7 +85,7 @@ railway variables set MAX_FILE_SIZE="10485760"
 
 echo "Setting Apple Sign-In variables..."
 railway variables set APPLE_TEAM_ID="GDZ9V6T9SF"
-railway variables set APPLE_KEY_ID="5Y3L2S8R8R"
+railway variables set APPLE_KEY_ID="J67ZY799AV"
 railway variables set APPLE_CLIENT_ID="com.bitbasel.app"
 railway variables set APPLE_REDIRECT_URI="https://bitbasel.app/auth/callback"
 railway variables set APPLE_PRIVATE_KEY_BASE64="$APPLE_PRIVATE_KEY_BASE64"
