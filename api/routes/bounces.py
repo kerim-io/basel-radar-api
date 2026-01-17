@@ -267,9 +267,7 @@ async def create_bounce(
                 actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
                 bounce_id=bounce.id,
                 bounce_venue_name=bounce.venue_name,
-                bounce_place_id=bounce.place_id,
-                bounce_latitude=bounce.latitude,
-                bounce_longitude=bounce.longitude
+                bounce_place_id=bounce.place_id
             )
             payload_dict = payload_to_dict(payload)
 
