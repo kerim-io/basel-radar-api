@@ -53,27 +53,51 @@ async def verify_apple_token(code: str, redirect_uri: str) -> dict:
 async def generate_client_secret() -> str:
     """
     Generate client secret JWT for Apple Sign In
-    Requires private key file in keys/ directory
+    Uses APPLE_KEY_BASE64 from environment or falls back to file
     """
     from datetime import datetime, timedelta
     from jose import jwt
-    import os
+    import base64
 
-    # Load private key (use absolute path)
-    from pathlib import Path
-    base_dir = Path(__file__).parent.parent
-    key_path = base_dir / "keys" / f"{settings.APPLE_KEY_ID}.p8"
+    private_key = None
 
-    logger.info(f"Looking for Apple key at: {key_path}")
+    # Try loading from base64 env var first (Railway)
+    apple_key_b64 = getattr(settings, 'APPLE_KEY_BASE64', '') or getattr(settings, 'APNS_KEY_BASE64', '')
+    if apple_key_b64:
+        try:
+            key_b64 = apple_key_b64.strip().replace(" ", "").replace("\n", "")
+            key_data = base64.b64decode(key_b64)
 
-    if not key_path.exists():
-        logger.error(f"Apple private key not found at {key_path}")
-        raise FileNotFoundError(f"Apple private key not found at {key_path}")
+            # Check if PEM headers are present, if not wrap the raw key
+            if not key_data.startswith(b"-----BEGIN"):
+                private_key = (
+                    "-----BEGIN PRIVATE KEY-----\n" +
+                    key_b64 +
+                    "\n-----END PRIVATE KEY-----\n"
+                )
+                logger.info("Apple key loaded from base64 env var (wrapped with PEM headers)")
+            else:
+                private_key = key_data.decode('utf-8')
+                logger.info("Apple key loaded from base64 env var")
+        except Exception as e:
+            logger.warning(f"Failed to load Apple key from base64: {e}")
 
-    with open(key_path, "r") as f:
-        private_key = f.read()
+    # Fallback to file if env var not available
+    if not private_key:
+        from pathlib import Path
+        base_dir = Path(__file__).parent.parent
+        key_path = base_dir / "keys" / f"{settings.APPLE_KEY_ID}.p8"
 
-    logger.info(f"Loaded Apple key, length: {len(private_key)} chars")
+        logger.info(f"Looking for Apple key at: {key_path}")
+
+        if not key_path.exists():
+            logger.error(f"Apple private key not found at {key_path}")
+            raise FileNotFoundError(f"Apple private key not found at {key_path}")
+
+        with open(key_path, "r") as f:
+            private_key = f.read()
+
+        logger.info(f"Loaded Apple key from file, length: {len(private_key)} chars")
 
     headers = {
         "kid": settings.APPLE_KEY_ID,
