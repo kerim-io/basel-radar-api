@@ -186,7 +186,7 @@ async def seed_static_crowd():
 
     try:
         # 1. Clean up existing test data
-        print("Cleaning up existing test users...")
+        print("Cleaning up existing test users and old fake places...")
         await db.execute(text("""
             DELETE FROM check_ins WHERE user_id IN (
                 SELECT id FROM users WHERE apple_user_id LIKE 'test_user_%'
@@ -200,6 +200,13 @@ async def seed_static_crowd():
             )
         """))
         await db.execute(text("DELETE FROM users WHERE apple_user_id LIKE 'test_user_%'"))
+        # Clean up old fake places from previous script version
+        await db.execute(text("""
+            DELETE FROM google_pics WHERE place_id IN (
+                SELECT id FROM places WHERE place_id LIKE 'test_place_%'
+            )
+        """))
+        await db.execute(text("DELETE FROM places WHERE place_id LIKE 'test_place_%'"))
         await db.commit()
         print("Cleanup complete.")
 
