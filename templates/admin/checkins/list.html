@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Check-ins{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Check-ins</h1>
+    <span class="badge">{{ total }} total</span>
+</div>
+
+<div class="filters">
+    <form method="get" class="filter-form">
+        <label>
+            <input type="checkbox" name="active_only" value="true" {% if active_only %}checked{% endif %} onchange="this.form.submit()">
+            Active only
+        </label>
+    </form>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>User</th>
+            <th>Location</th>
+            <th>Coordinates</th>
+            <th>Active</th>
+            <th>Created</th>
+            <th>Last Seen</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for checkin in checkins %}
+        <tr>
+            <td>{{ checkin.id }}</td>
+            <td>
+                {% if checkin.user %}
+                <a href="/admin/users/{{ checkin.user.id }}">{{ checkin.user.nickname or 'User ' ~ checkin.user.id }}</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if checkin.place %}
+                {{ checkin.place.name }}
+                {% elif checkin.location_name %}
+                {{ checkin.location_name }}
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ "%.4f"|format(checkin.latitude) }}, {{ "%.4f"|format(checkin.longitude) }}</td>
+            <td>
+                {% if checkin.is_active %}
+                <span class="badge badge-success">Active</span>
+                {% else %}
+                <span class="badge badge-secondary">Inactive</span>
+                {% endif %}
+            </td>
+            <td>{{ checkin.created_at.strftime('%Y-%m-%d %H:%M') if checkin.created_at else '-' }}</td>
+            <td>{{ checkin.last_seen_at.strftime('%Y-%m-%d %H:%M') if checkin.last_seen_at else '-' }}</td>
+            <td>
+                <form method="post" action="/admin/checkins/{{ checkin.id }}/delete" style="display: inline;" onsubmit="return confirm('Delete this check-in?')">
+                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="8" class="text-center">No check-ins found</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}{% if active_only %}&active_only=true{% endif %}" class="btn btn-sm">&laquo; Previous</a>
+    {% endif %}
+
+    <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}{% if active_only %}&active_only=true{% endif %}" class="btn btn-sm">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

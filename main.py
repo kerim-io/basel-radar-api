@@ -9,7 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from db.database import create_db_and_tables
-from api.routes import auth, users, websocket, geocoding, bounces, notifications, checkins
+from api.routes import auth, users, websocket, geocoding, bounces, notifications, checkins, admin
 from api.routes.websocket import manager as ws_manager
 # Instagram 2FA - uncomment when ready to use
 # from api.routes import instagram_verify
@@ -73,6 +73,11 @@ uploads_dir = Path(settings.UPLOAD_DIR)
 uploads_dir.mkdir(exist_ok=True)
 app.mount("/files", StaticFiles(directory=settings.UPLOAD_DIR), name="files")
 
+# Static files for admin dashboard
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Include routers
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -81,6 +86,7 @@ app.include_router(geocoding.router)
 app.include_router(bounces.router)
 app.include_router(notifications.router)
 app.include_router(checkins.router)
+app.include_router(admin.router)
 # app.include_router(instagram_verify.router)  # Uncomment when ready to use
 
 

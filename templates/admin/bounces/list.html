@@ -1,0 +1,93 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Bounces{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Bounces</h1>
+    <span class="badge">{{ total }} total</span>
+</div>
+
+<div class="filters">
+    <form method="get" class="filter-form">
+        <select name="status_filter" onchange="this.form.submit()">
+            <option value="">All Statuses</option>
+            <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active</option>
+            <option value="archived" {% if status_filter == 'archived' %}selected{% endif %}>Archived</option>
+        </select>
+    </form>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Creator</th>
+            <th>Venue</th>
+            <th>Status</th>
+            <th>Public</th>
+            <th>Now</th>
+            <th>Invites</th>
+            <th>Time</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for bounce in bounces %}
+        <tr>
+            <td>{{ bounce.id }}</td>
+            <td>
+                {% if bounce.creator %}
+                <a href="/admin/users/{{ bounce.creator.id }}">{{ bounce.creator.nickname or 'User ' ~ bounce.creator.id }}</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ bounce.venue_name }}</td>
+            <td>
+                <span class="badge {% if bounce.status == 'active' %}badge-success{% else %}badge-secondary{% endif %}">
+                    {{ bounce.status }}
+                </span>
+            </td>
+            <td>
+                {% if bounce.is_public %}
+                <span class="badge badge-info">Public</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if bounce.is_now %}
+                <span class="badge badge-warning">Now</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ bounce.invites|length }}</td>
+            <td>{{ bounce.bounce_time.strftime('%Y-%m-%d %H:%M') if bounce.bounce_time else '-' }}</td>
+            <td>
+                <a href="/admin/bounces/{{ bounce.id }}" class="btn btn-sm">View</a>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="9" class="text-center">No bounces found</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}{% if status_filter %}&status_filter={{ status_filter }}{% endif %}" class="btn btn-sm">&laquo; Previous</a>
+    {% endif %}
+
+    <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}{% if status_filter %}&status_filter={{ status_filter }}{% endif %}" class="btn btn-sm">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

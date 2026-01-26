@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin{% endblock %} - Art Basel Miami</title>
+    <link rel="stylesheet" href="/static/admin/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <a href="/admin/">Art Basel Admin</a>
+        </div>
+        <div class="nav-links">
+            <a href="/admin/">Dashboard</a>
+            <a href="/admin/users">Users</a>
+            <a href="/admin/checkins">Check-ins</a>
+            <a href="/admin/bounces">Bounces</a>
+            <a href="/admin/places">Places</a>
+            <a href="/admin/follows">Follows</a>
+        </div>
+        <div class="nav-user">
+            <span>{{ admin.nickname or admin.email or 'Admin' }}</span>
+            <a href="/admin/logout" class="btn btn-sm">Logout</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="/static/admin/admin.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

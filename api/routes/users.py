@@ -1130,6 +1130,7 @@ class CloseFriendLocationResponse(BaseModel):
     latitude: float
     longitude: float
     updated_at: datetime
+    checked_in_venue: Optional[str] = None  # Venue name if checked in
 
 
 @router.post("/me/location/close-friends")
@@ -1189,7 +1190,11 @@ async def get_close_friend_locations(
     - They are sharing their location with you (their is_sharing_location = True)
     - They have a recent location update
     """
-    from datetime import datetime, timezone, timedelta
+    from db.models import CheckIn
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"📍 get_close_friend_locations called for user {current_user.id}")
 
     # Find close friends who are sharing their location with us
     # This means: they follow us AND have is_sharing_location = True
@@ -1205,21 +1210,43 @@ async def get_close_friend_locations(
         )
     )
     rows = result.all()
+    logger.info(f"📍 Found {len(rows)} close friends sharing location")
 
-    # Filter to only include recent locations (within last 15 minutes)
-    cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=15)
+    # Debug: Check all close friends regardless of sharing status
+    debug_result = await db.execute(
+        select(User, Follow).join(
+            Follow, Follow.follower_id == User.id
+        ).where(
+            Follow.following_id == current_user.id,
+            Follow.close_friend_status == 'accepted'
+        )
+    )
+    debug_rows = debug_result.all()
+    for user, follow in debug_rows:
+        logger.info(f"📍 Close friend {user.id} ({user.nickname}): is_sharing_location={follow.is_sharing_location}, lat={user.last_location_lat}, lon={user.last_location_lon}")
+
+    # Get active check-ins for these users
+    user_ids = [user.id for user, _ in rows]
+    checkin_result = await db.execute(
+        select(CheckIn).where(
+            CheckIn.user_id.in_(user_ids),
+            CheckIn.is_active == True
+        )
+    )
+    active_checkins = {ci.user_id: ci for ci in checkin_result.scalars().all()}
 
     locations = []
     for user, follow in rows:
-        if user.last_location_update and user.last_location_update > cutoff_time:
-            locations.append(CloseFriendLocationResponse(
-                user_id=user.id,
-                nickname=user.nickname or user.first_name,
-                profile_picture=user.profile_picture or user.instagram_profile_pic,
-                latitude=user.last_location_lat,
-                longitude=user.last_location_lon,
-                updated_at=user.last_location_update
-            ))
+        checkin = active_checkins.get(user.id)
+        locations.append(CloseFriendLocationResponse(
+            user_id=user.id,
+            nickname=user.nickname or user.first_name,
+            profile_picture=user.profile_picture or user.instagram_profile_pic,
+            latitude=user.last_location_lat,
+            longitude=user.last_location_lon,
+            updated_at=user.last_location_update,
+            checked_in_venue=checkin.location_name if checkin else None
+        ))
 
     return locations
 

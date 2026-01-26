@@ -1,0 +1,85 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Follows{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Follow Relationships</h1>
+    <span class="badge">{{ total }} total</span>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Follower</th>
+            <th>Following</th>
+            <th>Close Friend</th>
+            <th>Location Sharing</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for follow in follows %}
+        <tr>
+            <td>{{ follow.id }}</td>
+            <td>
+                {% if follow.follower %}
+                <a href="/admin/users/{{ follow.follower.id }}">{{ follow.follower.nickname or 'User ' ~ follow.follower.id }}</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if follow.following %}
+                <a href="/admin/users/{{ follow.following.id }}">{{ follow.following.nickname or 'User ' ~ follow.following.id }}</a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if follow.close_friend_status == 'accepted' %}
+                <span class="badge badge-success">Accepted</span>
+                {% elif follow.close_friend_status == 'pending' %}
+                <span class="badge badge-warning">Pending</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if follow.is_sharing_location %}
+                <span class="badge badge-info">Sharing</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ follow.created_at.strftime('%Y-%m-%d %H:%M') if follow.created_at else '-' }}</td>
+            <td>
+                <form method="post" action="/admin/follows/{{ follow.id }}/delete" style="display: inline;" onsubmit="return confirm('Delete this follow relationship?')">
+                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="7" class="text-center">No follow relationships found</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" class="btn btn-sm">&laquo; Previous</a>
+    {% endif %}
+
+    <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" class="btn btn-sm">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

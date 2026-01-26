@@ -1,0 +1,87 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Users{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Users</h1>
+    <span class="badge">{{ total }} total</span>
+</div>
+
+<div class="filters">
+    <form method="get" class="search-form">
+        <input type="text" name="search" placeholder="Search by name, email..." value="{{ search }}">
+        <button type="submit" class="btn">Search</button>
+        {% if search %}
+        <a href="/admin/users" class="btn btn-secondary">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Nickname</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Admin</th>
+            <th>Can Post</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.id }}</td>
+            <td>{{ user.nickname or '-' }}</td>
+            <td>{{ user.email or '-' }}</td>
+            <td>
+                {% if user.is_active %}
+                <span class="badge badge-success">Active</span>
+                {% else %}
+                <span class="badge badge-danger">Inactive</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if user.is_admin %}
+                <span class="badge badge-warning">Admin</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                {% if user.can_post %}
+                <span class="badge badge-info">Yes</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else '-' }}</td>
+            <td>
+                <a href="/admin/users/{{ user.id }}" class="btn btn-sm">View</a>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="8" class="text-center">No users found</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}{% if search %}&search={{ search }}{% endif %}" class="btn btn-sm">&laquo; Previous</a>
+    {% endif %}
+
+    <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}{% if search %}&search={{ search }}{% endif %}" class="btn btn-sm">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

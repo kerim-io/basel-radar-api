@@ -78,6 +78,9 @@ async def run_migrations():
         # Performance indexes for high-traffic queries
         "CREATE INDEX IF NOT EXISTS idx_follows_follower_following ON follows(follower_id, following_id)",
         "CREATE INDEX IF NOT EXISTS idx_device_tokens_user_active ON device_tokens(user_id, is_active) WHERE is_active = true",
+        # Admin dashboard
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin) WHERE is_admin = TRUE",
     ]
 
     engine = get_engine()

@@ -533,12 +533,13 @@ async def get_invited_bounces(
         .scalar_subquery()
     )
 
-    # Get bounces where user is invited
+    # Get bounces where user is invited (exclude declined invites)
     stmt = (
         select(Bounce, User, invite_count_subq.label('invite_count'))
         .join(User, Bounce.creator_id == User.id)
         .join(BounceInvite, Bounce.id == BounceInvite.bounce_id)
         .where(BounceInvite.user_id == current_user.id)
+        .where(BounceInvite.status != 'declined')
         .where(Bounce.status == 'active')
         .order_by(Bounce.bounce_time.asc())
     )
