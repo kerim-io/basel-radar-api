@@ -193,6 +193,9 @@ class Bounce(Base):
     # Visibility
     is_public = Column(Boolean, default=False, nullable=False)
 
+    # Creator message (optional hype text like "The Hart, time to hunt")
+    message = Column(String(500), nullable=True)
+
     # Status: 'active', 'archived'
     status = Column(String(20), default='active', nullable=False, index=True)
 

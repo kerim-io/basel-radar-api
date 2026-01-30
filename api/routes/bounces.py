@@ -109,6 +109,7 @@ class BounceCreate(BaseModel):
     bounce_time: datetime
     is_now: bool = False
     is_public: bool = False
+    message: Optional[str] = None
     invite_user_ids: Optional[List[int]] = None
 
 
@@ -133,6 +134,7 @@ class BounceResponse(BaseModel):
     bounce_time: datetime
     is_now: bool
     is_public: bool
+    message: Optional[str] = None
     status: str
     invite_count: int
     attendee_count: int = 0
@@ -145,6 +147,37 @@ class BounceResponse(BaseModel):
 
 class InviteRequest(BaseModel):
     user_ids: List[int]
+
+
+def build_bounce_response(
+    bounce: "Bounce",
+    user: "User",
+    invite_count: int,
+    venue_photo_url: Optional[str] = None,
+    attendee_count: int = 0,
+    attendees: Optional[List[AttendeeInfo]] = None,
+) -> BounceResponse:
+    return BounceResponse(
+        id=bounce.id,
+        creator_id=bounce.creator_id,
+        creator_nickname=user.nickname,
+        creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
+        venue_name=bounce.venue_name,
+        venue_address=bounce.venue_address,
+        latitude=bounce.latitude,
+        longitude=bounce.longitude,
+        place_id=bounce.place_id,
+        venue_photo_url=venue_photo_url,
+        bounce_time=bounce.bounce_time,
+        is_now=bounce.is_now,
+        is_public=bounce.is_public,
+        message=bounce.message,
+        status=bounce.status,
+        invite_count=invite_count,
+        attendee_count=attendee_count,
+        attendees=attendees,
+        created_at=bounce.created_at,
+    )
 
 
 # Endpoints
@@ -182,7 +215,8 @@ async def create_bounce(
             place_id=bounce_data.place_id,
             bounce_time=bounce_data.bounce_time,
             is_now=bounce_data.is_now,
-            is_public=bounce_data.is_public
+            is_public=bounce_data.is_public,
+            message=bounce_data.message
         )
         db.add(bounce)
         await db.flush()  # Get the bounce ID
@@ -211,26 +245,9 @@ async def create_bounce(
         )
 
         # Build response
-        # Use profile_picture if set, otherwise fallback to instagram_profile_pic
-        profile_pic = current_user.profile_picture or current_user.instagram_profile_pic
         venue_photo = await get_venue_photo_url(db, places_fk_id)
-        bounce_response = BounceResponse(
-            id=bounce.id,
-            creator_id=bounce.creator_id,
-            creator_nickname=current_user.nickname,
-            creator_profile_pic=profile_pic,
-            venue_name=bounce.venue_name,
-            venue_address=bounce.venue_address,
-            latitude=bounce.latitude,
-            longitude=bounce.longitude,
-            place_id=bounce.place_id,
-            venue_photo_url=venue_photo,
-            bounce_time=bounce.bounce_time,
-            is_now=bounce.is_now,
-            is_public=bounce.is_public,
-            status=bounce.status,
-            invite_count=invite_count,
-            created_at=bounce.created_at
+        bounce_response = build_bounce_response(
+            bounce, current_user, invite_count, venue_photo_url=venue_photo
         )
 
         # Broadcast via WebSocket
@@ -336,23 +353,9 @@ async def get_bounces(
     venue_photos = await get_venue_photos_batch(db, places_fk_ids)
 
     return [
-        BounceResponse(
-            id=bounce.id,
-            creator_id=bounce.creator_id,
-            creator_nickname=user.nickname,
-            creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-            venue_name=bounce.venue_name,
-            venue_address=bounce.venue_address,
-            latitude=bounce.latitude,
-            longitude=bounce.longitude,
-            place_id=bounce.place_id,
+        build_bounce_response(
+            bounce, user, invite_count or 0,
             venue_photo_url=venue_photos.get(bounce.places_fk_id),
-            bounce_time=bounce.bounce_time,
-            is_now=bounce.is_now,
-            is_public=bounce.is_public,
-            status=bounce.status,
-            invite_count=invite_count or 0,
-            created_at=bounce.created_at
         )
         for bounce, user, invite_count in rows
     ]
@@ -445,25 +448,11 @@ async def get_map_bounces(
             attendee_count, attendees = await get_active_attendees(db, bounce.id, include_details=True)
 
         visible_bounces.append(
-            BounceResponse(
-                id=bounce.id,
-                creator_id=bounce.creator_id,
-                creator_nickname=user.nickname,
-                creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-                venue_name=bounce.venue_name,
-                venue_address=bounce.venue_address,
-                latitude=bounce.latitude,
-                longitude=bounce.longitude,
-                place_id=bounce.place_id,
+            build_bounce_response(
+                bounce, user, invite_count or 0,
                 venue_photo_url=venue_photos.get(bounce.places_fk_id),
-                bounce_time=bounce.bounce_time,
-                is_now=bounce.is_now,
-                is_public=bounce.is_public,
-                status=bounce.status,
-                invite_count=invite_count or 0,
                 attendee_count=attendee_count,
                 attendees=attendees,
-                created_at=bounce.created_at
             )
         )
 
@@ -498,23 +487,9 @@ async def get_my_bounces(
     venue_photos = await get_venue_photos_batch(db, places_fk_ids)
 
     return [
-        BounceResponse(
-            id=bounce.id,
-            creator_id=bounce.creator_id,
-            creator_nickname=user.nickname,
-            creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-            venue_name=bounce.venue_name,
-            venue_address=bounce.venue_address,
-            latitude=bounce.latitude,
-            longitude=bounce.longitude,
-            place_id=bounce.place_id,
+        build_bounce_response(
+            bounce, user, invite_count or 0,
             venue_photo_url=venue_photos.get(bounce.places_fk_id),
-            bounce_time=bounce.bounce_time,
-            is_now=bounce.is_now,
-            is_public=bounce.is_public,
-            status=bounce.status,
-            invite_count=invite_count or 0,
-            created_at=bounce.created_at
         )
         for bounce, user, invite_count in rows
     ]
@@ -552,23 +527,84 @@ async def get_invited_bounces(
     venue_photos = await get_venue_photos_batch(db, places_fk_ids)
 
     return [
-        BounceResponse(
-            id=bounce.id,
-            creator_id=bounce.creator_id,
-            creator_nickname=user.nickname,
-            creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-            venue_name=bounce.venue_name,
-            venue_address=bounce.venue_address,
-            latitude=bounce.latitude,
-            longitude=bounce.longitude,
-            place_id=bounce.place_id,
+        build_bounce_response(
+            bounce, user, invite_count or 0,
             venue_photo_url=venue_photos.get(bounce.places_fk_id),
-            bounce_time=bounce.bounce_time,
-            is_now=bounce.is_now,
-            is_public=bounce.is_public,
-            status=bounce.status,
-            invite_count=invite_count or 0,
-            created_at=bounce.created_at
+        )
+        for bounce, user, invite_count in rows
+    ]
+
+
+@router.get("/shared/{user_id}", response_model=List[BounceResponse])
+async def get_shared_bounces(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get bounces shared between current user and another user.
+    Returns bounces where both users are either creator or invited.
+    """
+    invite_count_subq = (
+        select(func.count(BounceInvite.id))
+        .where(BounceInvite.bounce_id == Bounce.id)
+        .correlate(Bounce)
+        .scalar_subquery()
+    )
+
+    # Subquery for bounces where current user is involved
+    my_bounces = (
+        select(Bounce.id)
+        .outerjoin(BounceInvite, Bounce.id == BounceInvite.bounce_id)
+        .where(
+            or_(
+                Bounce.creator_id == current_user.id,
+                and_(
+                    BounceInvite.user_id == current_user.id,
+                    BounceInvite.status != 'declined'
+                )
+            )
+        )
+    ).distinct()
+
+    # Subquery for bounces where target user is involved
+    their_bounces = (
+        select(Bounce.id)
+        .outerjoin(BounceInvite, Bounce.id == BounceInvite.bounce_id)
+        .where(
+            or_(
+                Bounce.creator_id == user_id,
+                and_(
+                    BounceInvite.user_id == user_id,
+                    BounceInvite.status != 'declined'
+                )
+            )
+        )
+    ).distinct()
+
+    # Get bounces that are in both sets
+    stmt = (
+        select(Bounce, User, invite_count_subq.label('invite_count'))
+        .join(User, Bounce.creator_id == User.id)
+        .where(
+            Bounce.id.in_(my_bounces),
+            Bounce.id.in_(their_bounces),
+            Bounce.status == 'active'
+        )
+        .order_by(Bounce.bounce_time.asc())
+    )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Batch fetch venue photos
+    places_fk_ids = [bounce.places_fk_id for bounce, _, _ in rows if bounce.places_fk_id]
+    venue_photos = await get_venue_photos_batch(db, places_fk_ids)
+
+    return [
+        build_bounce_response(
+            bounce, user, invite_count or 0,
+            venue_photo_url=venue_photos.get(bounce.places_fk_id),
         )
         for bounce, user, invite_count in rows
     ]
@@ -622,23 +658,9 @@ async def get_public_bounces(
         distance = haversine_distance(lat, lng, bounce.latitude, bounce.longitude)
         if distance <= radius:
             nearby_bounces.append(
-                BounceResponse(
-                    id=bounce.id,
-                    creator_id=bounce.creator_id,
-                    creator_nickname=user.nickname,
-                    creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-                    venue_name=bounce.venue_name,
-                    venue_address=bounce.venue_address,
-                    latitude=bounce.latitude,
-                    longitude=bounce.longitude,
-                    place_id=bounce.place_id,
+                build_bounce_response(
+                    bounce, user, invite_count or 0,
                     venue_photo_url=venue_photos.get(bounce.places_fk_id),
-                    bounce_time=bounce.bounce_time,
-                    is_now=bounce.is_now,
-                    is_public=bounce.is_public,
-                    status=bounce.status,
-                    invite_count=invite_count or 0,
-                    created_at=bounce.created_at
                 )
             )
 
@@ -689,24 +711,7 @@ async def get_bounce(
     # Get venue photo
     venue_photo = await get_venue_photo_url(db, bounce.places_fk_id)
 
-    return BounceResponse(
-        id=bounce.id,
-        creator_id=bounce.creator_id,
-        creator_nickname=user.nickname,
-        creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-        venue_name=bounce.venue_name,
-        venue_address=bounce.venue_address,
-        latitude=bounce.latitude,
-        longitude=bounce.longitude,
-        place_id=bounce.place_id,
-        venue_photo_url=venue_photo,
-        bounce_time=bounce.bounce_time,
-        is_now=bounce.is_now,
-        is_public=bounce.is_public,
-        status=bounce.status,
-        invite_count=invite_count,
-        created_at=bounce.created_at
-    )
+    return build_bounce_response(bounce, user, invite_count, venue_photo_url=venue_photo)
 
 
 @router.delete("/{bounce_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1138,24 +1143,7 @@ async def archive_bounce(
     # Get venue photo
     venue_photo = await get_venue_photo_url(db, bounce.places_fk_id)
 
-    return BounceResponse(
-        id=bounce.id,
-        creator_id=bounce.creator_id,
-        creator_nickname=user.nickname,
-        creator_profile_pic=user.profile_picture or user.instagram_profile_pic,
-        venue_name=bounce.venue_name,
-        venue_address=bounce.venue_address,
-        latitude=bounce.latitude,
-        longitude=bounce.longitude,
-        place_id=bounce.place_id,
-        venue_photo_url=venue_photo,
-        bounce_time=bounce.bounce_time,
-        is_now=bounce.is_now,
-        is_public=bounce.is_public,
-        status=bounce.status,
-        invite_count=invite_count,
-        created_at=bounce.created_at
-    )
+    return build_bounce_response(bounce, user, invite_count, venue_photo_url=venue_photo)
 
 
 # ============== Attendee Tracking ==============
