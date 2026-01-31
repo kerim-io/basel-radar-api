@@ -348,6 +348,65 @@ class APNsService:
             results[user_id] = await self.send_notification(db, user_id, payload)
         return results
 
+    async def send_silent_push(self, db: AsyncSession, user_id: int) -> bool:
+        """Send a silent push notification to wake the app in background for location broadcasting"""
+        if not self._private_key:
+            return False
+
+        # Get active device tokens directly (skip notification preference check)
+        tokens_result = await db.execute(
+            select(DeviceToken).where(
+                DeviceToken.user_id == user_id,
+                DeviceToken.is_active == True
+            )
+        )
+        device_tokens = tokens_result.scalars().all()
+
+        if not device_tokens:
+            return False
+
+        silent_payload = {
+            "aps": {
+                "content-available": 1
+            },
+            "type": "location_wake"
+        }
+
+        success = False
+        for device_token in device_tokens:
+            base_url = APNS_SANDBOX_URL if device_token.is_sandbox else APNS_PRODUCTION_URL
+            url = f"{base_url}/3/device/{device_token.device_token}"
+
+            headers = {
+                "authorization": f"bearer {self._get_jwt_token()}",
+                "apns-topic": settings.APNS_BUNDLE_ID,
+                "apns-push-type": "background",
+                "apns-priority": "5",
+            }
+
+            try:
+                response = await self._client.post(url, json=silent_payload, headers=headers)
+                if response.status_code == 200:
+                    success = True
+                else:
+                    try:
+                        error_data = response.json()
+                        reason = error_data.get("reason", "Unknown")
+                    except:
+                        reason = f"HTTP {response.status_code}"
+
+                    if reason in ['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']:
+                        await db.execute(
+                            update(DeviceToken)
+                            .where(DeviceToken.device_token == device_token.device_token)
+                            .values(is_active=False)
+                        )
+            except Exception as e:
+                logger.error(f"Silent push error for user {user_id}: {e}")
+
+        await db.commit()
+        return success
+
 
 # Singleton accessor
 async def get_apns_service() -> APNsService:

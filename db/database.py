@@ -81,6 +81,9 @@ async def run_migrations():
         # Admin dashboard
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin) WHERE is_admin = TRUE",
+        # Bounce share link
+        "ALTER TABLE bounces ADD COLUMN IF NOT EXISTS share_token VARCHAR(64) UNIQUE",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_bounces_share_token ON bounces(share_token)",
     ]
 
     engine = get_engine()

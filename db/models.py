@@ -199,6 +199,9 @@ class Bounce(Base):
     # Status: 'active', 'archived'
     status = Column(String(20), default='active', nullable=False, index=True)
 
+    # Share link token for web map
+    share_token = Column(String(64), unique=True, index=True, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
@@ -337,3 +340,24 @@ class CheckInHistory(Base):
     # Relationships
     user = relationship("User")
     place = relationship("Place")
+
+
+class BounceGuestLocation(Base):
+    """Tracks guest (non-app user) locations shared via bounce share link"""
+    __tablename__ = "bounce_guest_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bounce_id = Column(Integer, ForeignKey("bounces.id", ondelete="CASCADE"), nullable=False, index=True)
+    guest_id = Column(String(64), nullable=False)       # browser sessionStorage UUID
+    display_name = Column(String(100), nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    is_sharing = Column(Boolean, default=True, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    bounce = relationship("Bounce")
+
+    __table_args__ = (
+        UniqueConstraint('bounce_id', 'guest_id', name='uq_bounce_guest_location'),
+    )

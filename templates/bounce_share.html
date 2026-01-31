@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{VENUE_NAME}} - Bounce</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#111;color:#fff;height:100vh;overflow:hidden}
+#map{width:100%;height:100vh}
+#overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:1000}
+.card{background:#1a1a1a;border-radius:16px;padding:32px;max-width:380px;width:90%;text-align:center}
+.card h1{font-size:20px;margin-bottom:4px;color:#fff}
+.card .venue{font-size:14px;color:#aaa;margin-bottom:6px}
+.card .msg{font-size:15px;color:#ccc;margin-bottom:20px;font-style:italic}
+.card .by{font-size:13px;color:#888;margin-bottom:20px}
+.card input{width:100%;padding:14px;border-radius:10px;border:1px solid #333;background:#222;color:#fff;font-size:16px;outline:none;margin-bottom:16px}
+.card input:focus{border-color:#4a9eff}
+.card button{width:100%;padding:14px;border-radius:10px;border:none;background:#4a9eff;color:#fff;font-size:16px;font-weight:600;cursor:pointer}
+.card button:disabled{opacity:.5;cursor:not-allowed}
+#info-bar{position:fixed;top:0;left:0;right:0;background:rgba(17,17,17,.9);backdrop-filter:blur(10px);padding:12px 16px;z-index:500;display:none;border-bottom:1px solid #222}
+#info-bar .title{font-size:16px;font-weight:600}
+#info-bar .sub{font-size:12px;color:#aaa}
+#status{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(17,17,17,.9);padding:8px 16px;border-radius:20px;font-size:12px;color:#aaa;z-index:500;display:none}
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <div class="card">
+    <h1>{{VENUE_NAME}}</h1>
+    <div class="venue">{{VENUE_ADDRESS}}</div>
+    <div class="msg">{{MESSAGE}}</div>
+    <div class="by">by {{CREATOR_NAME}}</div>
+    <input id="name-input" type="text" placeholder="Enter your name" maxlength="50" autocomplete="off">
+    <button id="join-btn" disabled onclick="joinBounce()">Join Map</button>
+  </div>
+</div>
+
+<div id="info-bar">
+  <div class="title">{{VENUE_NAME}}</div>
+  <div class="sub" id="people-count"></div>
+</div>
+
+<div id="status"></div>
+
+<div id="map"></div>
+
+<script>
+const VENUE_LAT = {{LATITUDE}};
+const VENUE_LNG = {{LONGITUDE}};
+const SHARE_TOKEN = "{{SHARE_TOKEN}}";
+const WS_BASE = "{{WS_BASE}}";
+
+let map, ws, geoWatchId;
+let markers = {};       // keyed by "user_{id}" or "guest_{id}"
+let myGuestId;
+let myName;
+
+const nameInput = document.getElementById('name-input');
+const joinBtn = document.getElementById('join-btn');
+
+nameInput.addEventListener('input', () => {
+  joinBtn.disabled = !nameInput.value.trim();
+});
+
+function joinBounce() {
+  myName = nameInput.value.trim();
+  if (!myName) return;
+
+  // Generate or retrieve guest_id
+  myGuestId = sessionStorage.getItem('bounce_guest_id');
+  if (!myGuestId) {
+    myGuestId = crypto.randomUUID();
+    sessionStorage.setItem('bounce_guest_id', myGuestId);
+  }
+  sessionStorage.setItem('bounce_guest_name', myName);
+
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('info-bar').style.display = 'block';
+  initMap();
+}
+
+// Restore session if returning
+(function() {
+  const savedName = sessionStorage.getItem('bounce_guest_name');
+  const savedId = sessionStorage.getItem('bounce_guest_id');
+  if (savedName && savedId) {
+    nameInput.value = savedName;
+    joinBtn.disabled = false;
+  }
+})();
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: { lat: VENUE_LAT, lng: VENUE_LNG },
+    zoom: 16,
+    disableDefaultUI: true,
+    zoomControl: true,
+    styles: [
+      { elementType: 'geometry', stylers: [{ color: '#1d2c4d' }] },
+      { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
+      { elementType: 'labels.text.stroke', stylers: [{ color: '#1a3646' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#304a7d' }] },
+      { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#255763' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1626' }] },
+      { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#283d6a' }] }
+    ]
+  });
+
+  // Venue marker
+  new google.maps.Marker({
+    position: { lat: VENUE_LAT, lng: VENUE_LNG },
+    map: map,
+    title: "{{VENUE_NAME}}",
+    icon: {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 14,
+      fillColor: '#ff4444',
+      fillOpacity: 1,
+      strokeColor: '#fff',
+      strokeWeight: 3
+    },
+    label: { text: '\u2605', color: '#fff', fontSize: '14px', fontWeight: 'bold' }
+  });
+
+  connectWebSocket();
+  startGeolocation();
+}
+
+function connectWebSocket() {
+  const url = `${WS_BASE}/ws/bounce/${SHARE_TOKEN}?guest_id=${encodeURIComponent(myGuestId)}&name=${encodeURIComponent(myName)}`;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => showStatus('Connected');
+  ws.onclose = () => {
+    showStatus('Disconnected. Reconnecting...');
+    setTimeout(connectWebSocket, 3000);
+  };
+  ws.onerror = () => {};
+
+  ws.onmessage = (event) => {
+    if (event.data === 'pong') return;
+    try {
+      const msg = JSON.parse(event.data);
+      handleMessage(msg);
+    } catch(e) {}
+  };
+
+  // Keepalive
+  setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+  }, 25000);
+}
+
+function handleMessage(msg) {
+  switch(msg.type) {
+    case 'initial_state':
+      (msg.app_users || []).forEach(u => upsertAppUser(u));
+      (msg.guests || []).forEach(g => upsertGuest(g));
+      updateCount();
+      break;
+    case 'location_shared':
+      upsertAppUser(msg);
+      updateCount();
+      break;
+    case 'location_sharing_stopped':
+      removeMarker('user_' + msg.user_id);
+      updateCount();
+      break;
+    case 'guest_location_shared':
+      if (msg.guest_id !== myGuestId) {
+        upsertGuest(msg);
+        updateCount();
+      }
+      break;
+    case 'guest_location_stopped':
+      if (msg.guest_id !== myGuestId) {
+        removeMarker('guest_' + msg.guest_id);
+        updateCount();
+      }
+      break;
+  }
+}
+
+function upsertAppUser(u) {
+  const key = 'user_' + u.user_id;
+  const pos = { lat: u.latitude, lng: u.longitude };
+  if (markers[key]) {
+    markers[key].setPosition(pos);
+  } else {
+    markers[key] = new google.maps.Marker({
+      position: pos,
+      map: map,
+      title: u.nickname || 'App User',
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 10,
+        fillColor: '#9b59b6',
+        fillOpacity: 1,
+        strokeColor: '#fff',
+        strokeWeight: 2
+      },
+      label: { text: (u.nickname || '?')[0].toUpperCase(), color: '#fff', fontSize: '11px', fontWeight: 'bold' }
+    });
+  }
+}
+
+function upsertGuest(g) {
+  const key = 'guest_' + g.guest_id;
+  const pos = { lat: g.latitude, lng: g.longitude };
+  if (markers[key]) {
+    markers[key].setPosition(pos);
+  } else {
+    markers[key] = new google.maps.Marker({
+      position: pos,
+      map: map,
+      title: g.display_name || 'Guest',
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 10,
+        fillColor: '#2ecc71',
+        fillOpacity: 1,
+        strokeColor: '#fff',
+        strokeWeight: 2
+      },
+      label: { text: (g.display_name || '?')[0].toUpperCase(), color: '#fff', fontSize: '11px', fontWeight: 'bold' }
+    });
+  }
+}
+
+function upsertSelf(lat, lng) {
+  const key = 'self';
+  const pos = { lat, lng };
+  if (markers[key]) {
+    markers[key].setPosition(pos);
+  } else {
+    markers[key] = new google.maps.Marker({
+      position: pos,
+      map: map,
+      title: 'You',
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 10,
+        fillColor: '#4a9eff',
+        fillOpacity: 1,
+        strokeColor: '#fff',
+        strokeWeight: 2
+      },
+      label: { text: 'You', color: '#fff', fontSize: '9px', fontWeight: 'bold' }
+    });
+  }
+}
+
+function removeMarker(key) {
+  if (markers[key]) {
+    markers[key].setMap(null);
+    delete markers[key];
+  }
+}
+
+function updateCount() {
+  const count = Object.keys(markers).filter(k => k !== 'self').length;
+  document.getElementById('people-count').textContent = count + ' people sharing location';
+}
+
+function startGeolocation() {
+  if (!navigator.geolocation) {
+    showStatus('Geolocation not supported');
+    return;
+  }
+  geoWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      upsertSelf(lat, lng);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'guest_location', latitude: lat, longitude: lng }));
+      }
+    },
+    (err) => { showStatus('Location access denied'); },
+    { enableHighAccuracy: true, maximumAge: 5000 }
+  );
+}
+
+function showStatus(text) {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+</script>
+<script async src="https://maps.googleapis.com/maps/api/js?key={{GOOGLE_MAPS_API_KEY}}&callback=Function.prototype"></script>
+</body>
+</html>

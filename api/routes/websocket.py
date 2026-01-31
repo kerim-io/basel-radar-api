@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 REDIS_CHANNEL_BROADCAST = "ws:broadcast"
 REDIS_CHANNEL_USER = "ws:user:{user_id}"
+REDIS_CHANNEL_BOUNCE = "ws:bounce:{bounce_id}"
 
 
 class ConnectionManager:
@@ -18,6 +19,7 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: Dict[int, List[WebSocket]] = {}
+        self.bounce_connections: Dict[int, List[WebSocket]] = {}  # bounce_id -> guest websockets
         self._subscriber_task: asyncio.Task | None = None
         self._pubsub = None  # Redis pubsub instance for dynamic subscriptions
 
@@ -96,6 +98,63 @@ class ConnectionManager:
             await self._send_local(message, user_id)
             return user_id in self.active_connections
 
+    async def connect_guest(self, websocket: WebSocket, bounce_id: int):
+        """Accept and track a guest WebSocket for a bounce share page"""
+        await websocket.accept()
+        is_new_bounce = bounce_id not in self.bounce_connections
+        if is_new_bounce:
+            self.bounce_connections[bounce_id] = []
+        self.bounce_connections[bounce_id].append(websocket)
+
+        # Subscribe to bounce channel if new
+        if is_new_bounce and self._pubsub is not None:
+            try:
+                channel = REDIS_CHANNEL_BOUNCE.format(bounce_id=bounce_id)
+                await self._pubsub.subscribe(channel)
+                logger.debug(f"Subscribed to Redis channel for bounce {bounce_id}")
+            except Exception as e:
+                logger.warning(f"Failed to subscribe to bounce channel: {e}")
+
+    def disconnect_guest(self, websocket: WebSocket, bounce_id: int):
+        """Remove a guest WebSocket from bounce tracking"""
+        if bounce_id in self.bounce_connections:
+            if websocket in self.bounce_connections[bounce_id]:
+                self.bounce_connections[bounce_id].remove(websocket)
+            if not self.bounce_connections[bounce_id]:
+                del self.bounce_connections[bounce_id]
+                if self._pubsub is not None:
+                    asyncio.create_task(self._unsubscribe_bounce(bounce_id))
+
+    async def _unsubscribe_bounce(self, bounce_id: int):
+        """Unsubscribe from a bounce's Redis channel"""
+        try:
+            channel = REDIS_CHANNEL_BOUNCE.format(bounce_id=bounce_id)
+            await self._pubsub.unsubscribe(channel)
+            logger.debug(f"Unsubscribed from Redis channel for bounce {bounce_id}")
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe from bounce channel: {e}")
+
+    async def _send_to_bounce_local(self, bounce_id: int, message: dict):
+        """Send to all local guest connections for a bounce"""
+        dead_connections = []
+        for ws in self.bounce_connections.get(bounce_id, []):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead_connections.append(ws)
+        for ws in dead_connections:
+            self.disconnect_guest(ws, bounce_id)
+
+    async def send_to_bounce(self, bounce_id: int, message: dict):
+        """Send to all guest WebSockets for a bounce across all instances via Redis"""
+        try:
+            redis = await get_redis()
+            channel = REDIS_CHANNEL_BOUNCE.format(bounce_id=bounce_id)
+            await redis.publish(channel, json.dumps(message))
+        except Exception as e:
+            logger.warning(f"Redis send_to_bounce failed, falling back to local: {e}")
+            await self._send_to_bounce_local(bounce_id, message)
+
     async def start_subscriber(self):
         """Start Redis subscriber for cross-instance messages"""
         if self._subscriber_task is not None:
@@ -115,8 +174,11 @@ class ConnectionManager:
                 # Subscribe to user-specific channels for connected users
                 for user_id in self.active_connections.keys():
                     await pubsub.subscribe(REDIS_CHANNEL_USER.format(user_id=user_id))
+                # Subscribe to bounce channels for connected guests
+                for bounce_id in self.bounce_connections.keys():
+                    await pubsub.subscribe(REDIS_CHANNEL_BOUNCE.format(bounce_id=bounce_id))
 
-                logger.info(f"Redis subscriber started, subscribed to {len(self.active_connections)} user channels")
+                logger.info(f"Redis subscriber started, subscribed to {len(self.active_connections)} user channels, {len(self.bounce_connections)} bounce channels")
 
                 async for msg in pubsub.listen():
                     if msg["type"] != "message":
@@ -134,6 +196,9 @@ class ConnectionManager:
                         elif channel.startswith("ws:user:"):
                             user_id = int(channel.split(":")[-1])
                             await self._send_local(data, user_id)
+                        elif channel.startswith("ws:bounce:"):
+                            bounce_id = int(channel.split(":")[-1])
+                            await self._send_to_bounce_local(bounce_id, data)
                     except Exception as e:
                         logger.error(f"Error processing Redis message: {e}")
 

@@ -1614,6 +1614,9 @@ async def toggle_location_sharing(
             if participant_id != current_user.id:
                 await manager.send_to_user(participant_id, stop_message)
 
+        # Also send to guest web clients watching this bounce
+        await manager.send_to_bounce(bounce_id, stop_message)
+
         logger.info(f"User {current_user.id} stopped sharing location for bounce {bounce_id}")
 
         return {"is_sharing": False, "message": "Location sharing disabled"}
@@ -1664,6 +1667,9 @@ async def update_location(
     for participant_id in participants:
         if participant_id != current_user.id:
             await manager.send_to_user(participant_id, location_message)
+
+    # Also send to guest web clients watching this bounce
+    await manager.send_to_bounce(bounce_id, location_message)
 
     return {"success": True}
 
