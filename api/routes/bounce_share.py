@@ -56,7 +56,9 @@ async def create_share_link(
         await db.commit()
         await db.refresh(bounce)
 
-    share_url = f"https://bounce-map.up.railway.app/bounce/share/{bounce.share_token}"
+    # Derive base URL from the incoming request so it works on any domain
+    base = str(request.base_url).rstrip("/")
+    share_url = f"{base}/bounce/share/{bounce.share_token}"
     return {"share_url": share_url, "share_token": bounce.share_token}
 
 
