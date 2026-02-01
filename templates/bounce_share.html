@@ -575,6 +575,7 @@ function upsertGuest(g) {
   if (markers[key]) {
     markers[key].setPosition(new google.maps.LatLng(g.latitude, g.longitude));
   } else {
+    const tapHandler = () => openGuestUserSheet(name);
     markers[key] = new google.maps.Marker({
       position: { lat: g.latitude, lng: g.longitude },
       map: map,
@@ -586,6 +587,7 @@ function upsertGuest(g) {
         anchor: new google.maps.Point(26 - spread.ox, 26)
       }
     });
+    markers[key].addListener('click', tapHandler);
   }
 }
 
