@@ -6,8 +6,8 @@
 <title>{{VENUE_NAME}} - Bounce</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#111;color:#fff;height:100vh;overflow:hidden}
-#map{width:100%;height:100vh}
+html,body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#111;color:#fff;height:100%;overflow:hidden;position:fixed;width:100%}
+#map{width:100%;height:100%}
 #overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:1000}
 .card{background:#1a1a1a;border-radius:16px;padding:32px;max-width:380px;width:90%;text-align:center}
 .card h1{font-size:20px;margin-bottom:4px;color:#fff}
@@ -22,7 +22,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 #info-bar .title{font-size:16px;font-weight:600}
 #info-bar .sub{font-size:12px;color:#aaa}
 #status{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(17,17,17,.9);padding:8px 16px;border-radius:20px;font-size:12px;color:#aaa;z-index:500;display:none}
-.map-label{position:absolute;background:rgba(0,0,0,.75);color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;transform:translate(-50%,6px);pointer-events:none}
+/* Venue pin overlay */
+.venue-pin{position:absolute;transform:translate(-50%,-100%);pointer-events:none;display:flex;flex-direction:column;align-items:center}
+.venue-pin-circle{width:52px;height:52px;border-radius:50%;border:3px solid #4a9eff;overflow:hidden;background:#555;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+.venue-pin-circle img{width:100%;height:100%;object-fit:cover}
+.venue-pin-circle .initial{font-size:20px;font-weight:bold;color:#fff}
+.venue-pin-label{margin-top:2px;background:rgba(0,0,0,.7);color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis}
+.venue-pin-tail{width:2px;height:8px;background:#4a9eff;margin-top:-1px}
 </style>
 </head>
 <body>
@@ -53,12 +59,12 @@ const VENUE_LNG = {{LONGITUDE}};
 const SHARE_TOKEN = "{{SHARE_TOKEN}}";
 const WS_BASE = "{{WS_BASE}}";
 const VENUE_PHOTO_URL = "{{VENUE_PHOTO_URL}}";
-const VENUE_NAME = "{{VENUE_NAME}}";
+const VENUE_NAME_STR = "{{VENUE_NAME}}";
 const STORAGE_KEY_ID = 'bounce_guest_id_' + SHARE_TOKEN;
 const STORAGE_KEY_NAME = 'bounce_guest_name_' + SHARE_TOKEN;
 
 let map, ws, geoWatchId;
-let markers = {};       // keyed by "user_{id}" or "guest_{id}"
+let markers = {};
 let myGuestId;
 let myName;
 let reconnectTimer;
@@ -79,7 +85,6 @@ function joinBounce() {
   myName = nameInput.value.trim();
   if (!myName) return;
 
-  // Generate or retrieve guest_id — use localStorage so it survives refresh
   myGuestId = localStorage.getItem(STORAGE_KEY_ID);
   if (!myGuestId) {
     myGuestId = crypto.randomUUID();
@@ -92,17 +97,15 @@ function joinBounce() {
   initMap();
 }
 
-// Auto-join if returning user (localStorage persists across refreshes)
+// Auto-join if returning user
 (function() {
   const savedName = localStorage.getItem(STORAGE_KEY_NAME);
   const savedId = localStorage.getItem(STORAGE_KEY_ID);
   if (savedName && savedId) {
-    // Auto-join without showing the overlay
     myName = savedName;
     myGuestId = savedId;
     document.getElementById('overlay').style.display = 'none';
     document.getElementById('info-bar').style.display = 'block';
-    // Wait for Google Maps script to load, then init
     waitForMaps(() => initMap());
   } else {
     nameInput.focus();
@@ -119,6 +122,68 @@ function waitForMaps(cb) {
   }, 100);
 }
 
+// Custom OverlayView for venue pin (avoids CORS canvas issues with venue photo)
+let VenuePinOverlay;
+function defineVenuePinOverlay() {
+  VenuePinOverlay = class extends google.maps.OverlayView {
+    constructor(position, photoUrl, name) {
+      super();
+      this.position = position;
+      this.photoUrl = photoUrl;
+      this.name = name;
+      this.div = null;
+    }
+    onAdd() {
+      this.div = document.createElement('div');
+      this.div.className = 'venue-pin';
+
+      const circle = document.createElement('div');
+      circle.className = 'venue-pin-circle';
+
+      if (this.photoUrl) {
+        const img = document.createElement('img');
+        img.src = this.photoUrl;
+        img.alt = this.name;
+        img.onerror = () => {
+          // Fallback to initial on load failure
+          circle.innerHTML = '<span class="initial">' + (this.name[0] || '?').toUpperCase() + '</span>';
+        };
+        circle.appendChild(img);
+      } else {
+        circle.innerHTML = '<span class="initial">' + (this.name[0] || '?').toUpperCase() + '</span>';
+      }
+
+      const tail = document.createElement('div');
+      tail.className = 'venue-pin-tail';
+
+      const label = document.createElement('div');
+      label.className = 'venue-pin-label';
+      label.textContent = this.name;
+
+      this.div.appendChild(circle);
+      this.div.appendChild(tail);
+      this.div.appendChild(label);
+
+      const panes = this.getPanes();
+      panes.overlayMouseTarget.appendChild(this.div);
+    }
+    draw() {
+      const projection = this.getProjection();
+      const pos = projection.fromLatLngToDivPixel(this.position);
+      if (pos) {
+        this.div.style.left = pos.x + 'px';
+        this.div.style.top = pos.y + 'px';
+      }
+    }
+    onRemove() {
+      if (this.div) {
+        this.div.parentNode.removeChild(this.div);
+        this.div = null;
+      }
+    }
+  };
+}
+
 function initMap() {
   if (!map) {
     map = new google.maps.Map(document.getElementById('map'), {
@@ -126,6 +191,7 @@ function initMap() {
       zoom: 16,
       disableDefaultUI: true,
       zoomControl: true,
+      gestureHandling: 'greedy',
       styles: [
         { elementType: 'geometry', stylers: [{ color: '#1d2c4d' }] },
         { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
@@ -137,127 +203,18 @@ function initMap() {
       ]
     });
 
-    // Venue marker — circular image pin like iOS app
-    createVenueMarker();
+    // Venue pin with photo (HTML overlay, no canvas/CORS issues)
+    defineVenuePinOverlay();
+    const venuePin = new VenuePinOverlay(
+      new google.maps.LatLng(VENUE_LAT, VENUE_LNG),
+      VENUE_PHOTO_URL,
+      VENUE_NAME_STR
+    );
+    venuePin.setMap(map);
   }
 
   connectWebSocket();
   startGeolocation();
-}
-
-function createVenueMarker() {
-  const size = 56;       // pin diameter
-  const border = 3;
-  const borderColor = '#4a9eff'; // blue border like iOS BouncePinIcon
-  const pos = { lat: VENUE_LAT, lng: VENUE_LNG };
-
-  function setVenueIcon(iconUrl) {
-    const venueMarker = new google.maps.Marker({
-      position: pos,
-      map: map,
-      title: VENUE_NAME,
-      icon: {
-        url: iconUrl,
-        scaledSize: new google.maps.Size(size, size + 18),
-        anchor: new google.maps.Point(size / 2, size + 18)
-      },
-      zIndex: 999
-    });
-  }
-
-  // Draw circular pin on canvas: image clipped to circle with blue border + name label below
-  function drawPin(img) {
-    const canvas = document.createElement('canvas');
-    const w = size;
-    const h = size + 18; // extra space for label
-    canvas.width = w * 2;  // retina
-    canvas.height = h * 2;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(2, 2);
-
-    const cx = w / 2;
-    const cy = w / 2;
-    const r = (w - border * 2) / 2;
-
-    // Shadow
-    ctx.shadowColor = 'rgba(0,0,0,0.4)';
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetY = 2;
-
-    // Blue border circle
-    ctx.beginPath();
-    ctx.arc(cx, cy, w / 2 - 1, 0, Math.PI * 2);
-    ctx.fillStyle = borderColor;
-    ctx.fill();
-
-    // Reset shadow
-    ctx.shadowColor = 'transparent';
-
-    if (img) {
-      // Clip to inner circle and draw image
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.clip();
-      // Cover-fit the image into the circle
-      const aspect = img.width / img.height;
-      let dw, dh, dx, dy;
-      if (aspect > 1) {
-        dh = r * 2;
-        dw = dh * aspect;
-        dx = cx - dw / 2;
-        dy = cy - r;
-      } else {
-        dw = r * 2;
-        dh = dw / aspect;
-        dx = cx - r;
-        dy = cy - dh / 2;
-      }
-      ctx.drawImage(img, dx, dy, dw, dh);
-      ctx.restore();
-    } else {
-      // Fallback: gray circle with venue initial
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#555';
-      ctx.fill();
-      ctx.font = 'bold 20px -apple-system, sans-serif';
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText((VENUE_NAME[0] || '?').toUpperCase(), cx, cy);
-    }
-
-    // Name label below pin
-    const label = VENUE_NAME.length > 14 ? VENUE_NAME.substring(0, 13) + '\u2026' : VENUE_NAME;
-    ctx.font = '600 9px -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    // Label background
-    const metrics = ctx.measureText(label);
-    const lw = metrics.width + 6;
-    const lh = 13;
-    const lx = cx - lw / 2;
-    const ly = w + 1;
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.beginPath();
-    ctx.roundRect(lx, ly, lw, lh, 3);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, cx, ly + 2);
-
-    return canvas.toDataURL();
-  }
-
-  if (VENUE_PHOTO_URL) {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => setVenueIcon(drawPin(img));
-    img.onerror = () => setVenueIcon(drawPin(null));
-    img.src = VENUE_PHOTO_URL;
-  } else {
-    setVenueIcon(drawPin(null));
-  }
 }
 
 function connectWebSocket() {
@@ -271,7 +228,6 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     showStatus('Connected');
-    // Start keepalive
     clearInterval(pingInterval);
     pingInterval = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
@@ -298,7 +254,6 @@ function connectWebSocket() {
 function handleMessage(msg) {
   switch(msg.type) {
     case 'initial_state':
-      // Clear existing markers (reconnect may have stale data)
       Object.keys(markers).forEach(k => { if (k !== 'self') removeMarker(k); });
       (msg.app_users || []).forEach(u => upsertAppUser(u));
       (msg.guests || []).forEach(g => {
@@ -421,7 +376,6 @@ function startGeolocation() {
     showStatus('Geolocation not supported');
     return;
   }
-  // Clear old watch if any
   if (geoWatchId != null) navigator.geolocation.clearWatch(geoWatchId);
 
   geoWatchId = navigator.geolocation.watchPosition(
@@ -446,13 +400,11 @@ function showStatus(text) {
   showStatus._timer = setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 
-// Handle page visibility changes — reconnect WS when page comes back
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && myGuestId && myName) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectWebSocket();
     }
-    // Re-send current location immediately
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((pos) => {
         const lat = pos.coords.latitude;
