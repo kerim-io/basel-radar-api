@@ -451,6 +451,34 @@ function createUserPin(lat, lng, photoUrl, initial, borderColor, onClick) {
   return pin;
 }
 
+// Offset overlapping pins so they fan out instead of stacking
+function spreadPosition(lat, lng, excludeKey) {
+  var threshold = 0.00015; // ~15m — close enough to be "same spot"
+  var offsetDist = 0.00012; // pixel-level nudge (~13m)
+  var collisions = [];
+  // Check venue pin
+  var vDist = Math.abs(lat - VENUE_LAT) + Math.abs(lng - VENUE_LNG);
+  if (vDist < threshold) collisions.push('venue');
+  // Check existing markers
+  Object.keys(markers).forEach(function(k) {
+    if (k === excludeKey) return;
+    var m = markers[k];
+    var pos = m.position || (m.getPosition && m.getPosition());
+    if (!pos) return;
+    var mLat = typeof pos.lat === 'function' ? pos.lat() : pos.lat;
+    var mLng = typeof pos.lng === 'function' ? pos.lng() : pos.lng;
+    if (Math.abs(lat - mLat) + Math.abs(lng - mLng) < threshold) {
+      collisions.push(k);
+    }
+  });
+  if (collisions.length === 0) return { lat: lat, lng: lng };
+  var angle = (collisions.length) * (2 * Math.PI / 6); // spread in hex pattern
+  return {
+    lat: lat + Math.cos(angle) * offsetDist,
+    lng: lng + Math.sin(angle) * offsetDist
+  };
+}
+
 // Proxy external URLs through our backend to avoid CORS/CORP blocks
 function proxyUrl(url) {
   if (!url) return null;
@@ -464,14 +492,16 @@ function upsertAppUser(u) {
   const pic = proxyUrl(u.profile_picture) || null;
   peopleData[key] = { name: name, type: 'app', pic: pic, user_id: u.user_id };
   if (markers[key]) {
-    markers[key].setPosition(new google.maps.LatLng(u.latitude, u.longitude));
+    var sp = spreadPosition(u.latitude, u.longitude, key);
+    markers[key].setPosition(new google.maps.LatLng(sp.lat, sp.lng));
   } else {
+    var sp = spreadPosition(u.latitude, u.longitude, key);
     const tapHandler = () => openUserSheet(u.user_id);
     if (pic) {
-      markers[key] = createUserPin(u.latitude, u.longitude, pic, (name[0] || '?').toUpperCase(), '#9b59b6', tapHandler);
+      markers[key] = createUserPin(sp.lat, sp.lng, pic, (name[0] || '?').toUpperCase(), '#9b59b6', tapHandler);
     } else {
       const marker = new google.maps.Marker({
-        position: { lat: u.latitude, lng: u.longitude },
+        position: { lat: sp.lat, lng: sp.lng },
         map: map,
         title: name,
         icon: {
@@ -491,12 +521,12 @@ function upsertGuest(g) {
   const name = g.display_name || 'Guest';
   peopleData[key] = { name: name, type: 'guest' };
   if (markers[key]) {
-    markers[key].setPosition(typeof markers[key].setPosition === 'function' && markers[key] instanceof google.maps.Marker
-      ? { lat: g.latitude, lng: g.longitude }
-      : new google.maps.LatLng(g.latitude, g.longitude));
+    var sp = spreadPosition(g.latitude, g.longitude, key);
+    markers[key].setPosition(new google.maps.LatLng(sp.lat, sp.lng));
   } else {
+    var sp = spreadPosition(g.latitude, g.longitude, key);
     markers[key] = new google.maps.Marker({
-      position: { lat: g.latitude, lng: g.longitude },
+      position: { lat: sp.lat, lng: sp.lng },
       map: map,
       title: name,
       icon: {
@@ -511,16 +541,17 @@ function upsertGuest(g) {
 function upsertSelf(lat, lng) {
   console.log('[bounce-geo] upsertSelf', lat, lng);
   const key = 'self';
+  var sp = spreadPosition(lat, lng, key);
   if (markers[key]) {
     if (markers[key] instanceof google.maps.Marker) {
-      markers[key].setPosition({ lat, lng });
+      markers[key].setPosition({ lat: sp.lat, lng: sp.lng });
     } else {
-      markers[key].setPosition(new google.maps.LatLng(lat, lng));
+      markers[key].setPosition(new google.maps.LatLng(sp.lat, sp.lng));
     }
   } else {
     const initial = myName ? myName[0].toUpperCase() : 'Y';
     markers[key] = new google.maps.Marker({
-      position: { lat, lng },
+      position: { lat: sp.lat, lng: sp.lng },
       map: map,
       title: 'You',
       icon: {
