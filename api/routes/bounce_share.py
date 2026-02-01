@@ -188,6 +188,7 @@ async def bounce_guest_websocket(
     """WebSocket for guest (non-app) users viewing a shared bounce map."""
     db = create_async_session()
     bounce_id = None
+    explicit_leave = False
     try:
         # Validate share_token
         result = await db.execute(
@@ -329,6 +330,11 @@ async def bounce_guest_websocket(
                 for pid in participants:
                     await manager.send_to_user(pid, stop_msg)
 
+            elif msg_type == "guest_leave":
+                # Explicit leave — flag so finally block sends guest_left
+                explicit_leave = True
+                break
+
     except WebSocketDisconnect:
         logger.info(f"Guest '{name}' ({guest_id}) disconnected from bounce {bounce_id}")
     except Exception as e:
@@ -351,17 +357,19 @@ async def bounce_guest_websocket(
             except Exception:
                 pass
 
-            # Notify everyone that guest left
+            # Send guest_left for explicit leave, guest_disconnected for WS drop
             try:
-                left_msg = {
-                    "type": "guest_left",
+                msg_type = "guest_left" if explicit_leave else "guest_disconnected"
+                notify_msg = {
+                    "type": msg_type,
                     "bounce_id": bounce_id,
-                    "guest_id": guest_id
+                    "guest_id": guest_id,
+                    "display_name": name
                 }
-                await manager.send_to_bounce(bounce_id, left_msg)
+                await manager.send_to_bounce(bounce_id, notify_msg)
                 participants = await get_bounce_participants(db, bounce_id)
                 for pid in participants:
-                    await manager.send_to_user(pid, left_msg)
+                    await manager.send_to_user(pid, notify_msg)
             except Exception:
                 pass
 

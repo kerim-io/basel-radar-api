@@ -16,7 +16,8 @@
 #bottom-sheet .person-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #222}
 #bottom-sheet .person-row:last-child{border-bottom:none}
 #bottom-sheet .person-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff;flex-shrink:0}
-#bottom-sheet .person-name{font-size:14px}
+#bottom-sheet .person-name{font-size:14px;flex:1}
+#bottom-sheet .person-dist{font-size:12px;color:#888;white-space:nowrap}
 .vs-close{position:absolute;top:0;right:0;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.15);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:none;color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;cursor:pointer}
 #sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:550;display:none}
 </style>
@@ -46,6 +47,11 @@
 
 <script>
 function openSheet() {
+  deactivatePin();
+  if (venuePinRef && venuePinRef.div) {
+    venuePinRef.div.classList.add('active');
+    activePinEl = venuePinRef.div;
+  }
   var photoEl = document.getElementById('sheet-photo');
   if (VENUE_PHOTO_URL) {
     photoEl.innerHTML = '<img src="' + VENUE_PHOTO_URL + '" onerror="this.parentNode.innerHTML=\'<span class=initial>' + (VENUE_NAME_STR[0] || '?').toUpperCase() + '</span>\'">';
@@ -70,7 +76,9 @@ function openSheet() {
   var html = '';
 
   if (myName) {
-    html += '<div class="person-row"><div class="person-avatar" style="background:' + colors.self + '">Y</div><div class="person-name">You (' + myName + ')</div></div>';
+    var selfPos = pinPositions['self'];
+    var selfDist = selfPos ? '<div class="person-dist">' + formatDist(haversineDist(selfPos.lat, selfPos.lng, VENUE_LAT, VENUE_LNG)) + '</div>' : '';
+    html += '<div class="person-row"><div class="person-avatar" style="background:' + colors.self + '">Y</div><div class="person-name">You (' + myName + ')</div>' + selfDist + '</div>';
   }
 
   Object.keys(peopleData).forEach(function(key) {
@@ -78,10 +86,12 @@ function openSheet() {
     var color = p.type === 'app' ? colors.app : colors.guest;
     var initial = (p.name[0] || '?').toUpperCase();
     var tap = p.type === 'app' && p.user_id ? 'onclick="closeSheet();openUserSheet(' + p.user_id + ')"' : 'onclick="closeSheet();openGuestUserSheet(\'' + p.name.replace(/'/g, "\\'") + '\')"';
+    var pos = pinPositions[key];
+    var distHtml = pos ? '<div class="person-dist">' + formatDist(haversineDist(pos.lat, pos.lng, VENUE_LAT, VENUE_LNG)) + '</div>' : '';
     if (p.pic) {
-      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="border:2px solid ' + color + ';padding:0;overflow:hidden"><img src="' + p.pic + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentNode.style.background=\'' + color + '\';this.parentNode.innerHTML=\'' + initial + '\'"></div><div class="person-name">' + p.name + '</div></div>';
+      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="border:2px solid ' + color + ';padding:0;overflow:hidden"><img src="' + p.pic + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentNode.style.background=\'' + color + '\';this.parentNode.innerHTML=\'' + initial + '\'"></div><div class="person-name">' + p.name + '</div>' + distHtml + '</div>';
     } else {
-      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="background:' + color + '">' + initial + '</div><div class="person-name">' + p.name + '</div></div>';
+      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="background:' + color + '">' + initial + '</div><div class="person-name">' + p.name + '</div>' + distHtml + '</div>';
     }
   });
 
@@ -95,6 +105,7 @@ function openSheet() {
 }
 
 function closeSheet() {
+  deactivatePin();
   document.getElementById('bottom-sheet').classList.remove('open');
   document.getElementById('sheet-backdrop').style.display = 'none';
 }

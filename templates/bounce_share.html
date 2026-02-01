@@ -32,14 +32,16 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-se
 #loc-btn svg{width:22px;height:22px;fill:#4a9eff}
 /* Venue pin overlay */
 .venue-pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;cursor:pointer}
-.venue-pin-circle{width:52px;height:52px;border-radius:50%;border:3px solid #4a9eff;overflow:hidden;background:#555;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+.venue-pin-circle{width:52px;height:52px;border-radius:50%;border:3px solid #4a9eff;overflow:hidden;background:#555;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;transition:transform .2s ease}
+.venue-pin.active .venue-pin-circle{transform:scale(1.3)}
 .venue-pin-circle img{width:100%;height:100%;object-fit:cover}
 .venue-pin-circle .initial{font-size:20px;font-weight:bold;color:#fff;font-family:Georgia,'Times New Roman',serif}
 .venue-pin-label{margin-top:2px;background:rgba(0,0,0,.7);color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis}
 .venue-pin-tail{width:2px;height:8px;background:#4a9eff;margin-top:-1px}
 /* User pin overlay (for profile pic users) */
 .user-pin{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;cursor:pointer}
-.user-pin-circle{width:52px;height:52px;border-radius:50%;border:3px solid #9b59b6;overflow:hidden;background:#555;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+.user-pin-circle{width:52px;height:52px;border-radius:50%;border:3px solid #9b59b6;overflow:hidden;background:#555;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;transition:transform .2s ease}
+.user-pin.active .user-pin-circle{transform:scale(1.3)}
 .user-pin-circle.guest{border-color:#2ecc71}
 .user-pin-circle.self-pin{border-color:#4a9eff}
 .user-pin-circle img{width:100%;height:100%;object-fit:cover}
@@ -101,10 +103,14 @@ const STORAGE_KEY_NAME = 'bounce_guest_name_' + SHARE_TOKEN;
 let map, ws, geoWatchId;
 let markers = {};
 let peopleData = {}; // track name/type for bottom sheet
+let activePinEl = null; // currently popped pin element
+let venuePinRef = null; // reference to venue pin overlay
 let myGuestId;
 let myName;
 let reconnectTimer;
 let pingInterval;
+let locationInterval; // periodic fallback for background location
+let wakeLock = null;
 
 const nameInput = document.getElementById('name-input');
 const joinBtn = document.getElementById('join-btn');
@@ -135,6 +141,11 @@ nameInput.addEventListener('keydown', (e) => {
 
 function leaveBounce() {
   if (geoWatchId != null) navigator.geolocation.clearWatch(geoWatchId);
+  clearInterval(locationInterval);
+  // Tell backend this is an explicit leave (not just a disconnect)
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'guest_leave' }));
+  }
   if (ws) ws.close();
   localStorage.removeItem(STORAGE_KEY_ID);
   localStorage.removeItem(STORAGE_KEY_NAME);
@@ -289,6 +300,7 @@ function initMap() {
       openSheet
     );
     venuePin.setMap(map);
+    venuePinRef = venuePin;
 
     // Close sheet when tapping map
     map.addListener('click', () => { closeSheet(); closeUserSheet(); });
@@ -367,7 +379,15 @@ function handleMessage(msg) {
         updateCount();
       }
       break;
+    case 'guest_disconnected':
+      // Guest browser went to background — remove their map pin but don't forget them
+      if (msg.guest_id !== myGuestId) {
+        removeMarker('guest_' + msg.guest_id);
+        updateCount();
+      }
+      break;
     case 'guest_left':
+      // Guest explicitly left — fully remove
       if (msg.guest_id !== myGuestId) {
         removeMarker('guest_' + msg.guest_id);
         delete peopleData['guest_' + msg.guest_id];
@@ -485,6 +505,26 @@ function getPixelOffset(lat, lng, myKey) {
   };
 }
 
+// Haversine distance between two points in meters
+function haversineDist(lat1, lng1, lat2, lng2) {
+  var R = 6371000;
+  var dLat = (lat2 - lat1) * Math.PI / 180;
+  var dLng = (lng2 - lng1) * Math.PI / 180;
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+          Math.sin(dLng/2) * Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function formatDist(m) {
+  if (m < 1000) return Math.round(m) + 'm';
+  return (m / 1000).toFixed(1) + 'km';
+}
+
+// Deactivate any currently popped pin
+function deactivatePin() {
+  if (activePinEl) { activePinEl.classList.remove('active'); activePinEl = null; }
+}
+
 // Proxy external URLs through our backend to avoid CORS/CORP blocks
 function proxyUrl(url) {
   if (!url) return null;
@@ -593,38 +633,54 @@ function updateCount() {
   document.getElementById('people-count').textContent = label;
 }
 
+function sendLocation(lat, lng) {
+  upsertSelf(lat, lng);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'guest_location', latitude: lat, longitude: lng }));
+  }
+}
+
 function startGeolocation() {
   if (!navigator.geolocation) {
     showStatus('Geolocation not supported');
     return;
   }
   if (geoWatchId != null) navigator.geolocation.clearWatch(geoWatchId);
+  clearInterval(locationInterval);
 
   // Get position immediately so pin shows right away
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      upsertSelf(pos.coords.latitude, pos.coords.longitude);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'guest_location', latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
-      }
-    },
+    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude),
     (err) => { console.warn('[bounce-geo] getCurrentPosition error:', err.code, err.message); },
     { enableHighAccuracy: true, maximumAge: 5000 }
   );
 
-  // Then watch for continuous updates
+  // Continuous watch
   geoWatchId = navigator.geolocation.watchPosition(
-    (pos) => {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-      upsertSelf(lat, lng);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'guest_location', latitude: lat, longitude: lng }));
-      }
-    },
+    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude),
     (err) => { showStatus('Location access denied'); },
     { enableHighAccuracy: true, maximumAge: 5000 }
   );
+
+  // Periodic fallback — fires even when watchPosition stalls in background
+  locationInterval = setInterval(() => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+  }, 10000);
+
+  // Try to keep screen awake so location keeps streaming
+  acquireWakeLock();
+}
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch(e) {}
 }
 
 function requestLocation() {
@@ -667,17 +723,19 @@ function showStatus(text) {
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && myGuestId && myName) {
+    // Reconnect WS if it died in background
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectWebSocket();
     }
+    // Immediately blast current position
     if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        upsertSelf(pos.coords.latitude, pos.coords.longitude);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'guest_location', latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
-        }
-      }, () => {}, { enableHighAccuracy: true, maximumAge: 5000 });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude),
+        () => {}, { enableHighAccuracy: true, maximumAge: 5000 }
+      );
     }
+    // Re-acquire wake lock (released when page hidden on some browsers)
+    acquireWakeLock();
   }
 });
 </script>

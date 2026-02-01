@@ -26,6 +26,11 @@
 
 <script>
 function openUserSheet(userId) {
+  deactivatePin();
+  var pinKey = 'user_' + userId;
+  var m = markers[pinKey];
+  if (m && m.div) { m.div.classList.add('active'); activePinEl = m.div; }
+
   var sheet = document.getElementById('user-sheet');
   var picEl = document.getElementById('us-pic');
   var nameEl = document.getElementById('us-name');
@@ -64,6 +69,7 @@ function openUserSheet(userId) {
 }
 
 function closeUserSheet() {
+  deactivatePin();
   document.getElementById('user-sheet').classList.remove('open');
   document.getElementById('user-sheet-backdrop').style.display = 'none';
 }
