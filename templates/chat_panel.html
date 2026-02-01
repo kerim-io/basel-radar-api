@@ -78,11 +78,10 @@ function initFeedSheet() {
   document.addEventListener('mousemove', onDragMove);
   document.addEventListener('mouseup', onDragEnd);
 
-  // Messages area + input bar: smart drag vs scroll
+  // Messages area: smart drag vs scroll
   messagesEl.addEventListener('touchstart', onContentTouchStart, { passive: true });
   messagesEl.addEventListener('touchmove', onContentTouchMove, { passive: false });
   messagesEl.addEventListener('touchend', onContentTouchEnd);
-  inputBar.addEventListener('touchstart', onDragStart, { passive: false });
 
   // Restore persisted chat
   restoreChat();
