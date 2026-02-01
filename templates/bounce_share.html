@@ -23,12 +23,32 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-se
 #info-bar .sub{font-size:12px;color:#aaa}
 #status{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(17,17,17,.9);padding:8px 16px;border-radius:20px;font-size:12px;color:#aaa;z-index:500;display:none}
 /* Venue pin overlay */
-.venue-pin{position:absolute;transform:translate(-50%,-100%);pointer-events:none;display:flex;flex-direction:column;align-items:center}
+.venue-pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;cursor:pointer}
 .venue-pin-circle{width:52px;height:52px;border-radius:50%;border:3px solid #4a9eff;overflow:hidden;background:#555;box-shadow:0 2px 6px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
 .venue-pin-circle img{width:100%;height:100%;object-fit:cover}
 .venue-pin-circle .initial{font-size:20px;font-weight:bold;color:#fff}
 .venue-pin-label{margin-top:2px;background:rgba(0,0,0,.7);color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis}
 .venue-pin-tail{width:2px;height:8px;background:#4a9eff;margin-top:-1px}
+/* Bottom sheet */
+#bottom-sheet{position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;border-radius:20px 20px 0 0;z-index:600;transform:translateY(100%);transition:transform .3s ease;max-height:55vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#bottom-sheet.open{transform:translateY(0)}
+#bottom-sheet .handle{width:36px;height:4px;background:#444;border-radius:2px;margin:10px auto}
+#bottom-sheet .sheet-content{padding:0 20px 24px}
+#bottom-sheet .sheet-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+#bottom-sheet .sheet-photo{width:48px;height:48px;border-radius:50%;overflow:hidden;background:#333;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+#bottom-sheet .sheet-photo img{width:100%;height:100%;object-fit:cover}
+#bottom-sheet .sheet-photo .initial{font-size:18px;font-weight:bold;color:#fff}
+#bottom-sheet .sheet-info h2{font-size:18px;margin-bottom:2px}
+#bottom-sheet .sheet-info p{font-size:13px;color:#aaa;margin:0}
+#bottom-sheet .sheet-message{font-size:14px;color:#ccc;font-style:italic;margin-bottom:14px;padding:10px;background:#222;border-radius:10px}
+#bottom-sheet .sheet-meta{font-size:12px;color:#888;display:flex;gap:16px;margin-bottom:14px}
+#bottom-sheet .sheet-people{margin-top:4px}
+#bottom-sheet .sheet-people h3{font-size:13px;color:#888;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+#bottom-sheet .person-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #222}
+#bottom-sheet .person-row:last-child{border-bottom:none}
+#bottom-sheet .person-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff;flex-shrink:0}
+#bottom-sheet .person-name{font-size:14px}
+#sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:550;display:none}
 </style>
 </head>
 <body>
@@ -53,6 +73,28 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-se
 
 <div id="map"></div>
 
+<div id="sheet-backdrop" onclick="closeSheet()"></div>
+<div id="bottom-sheet">
+  <div class="handle"></div>
+  <div class="sheet-content">
+    <div class="sheet-header">
+      <div class="sheet-photo" id="sheet-photo"></div>
+      <div class="sheet-info">
+        <h2 id="sheet-venue-name"></h2>
+        <p id="sheet-venue-address"></p>
+      </div>
+    </div>
+    <div class="sheet-message" id="sheet-message"></div>
+    <div class="sheet-meta">
+      <span id="sheet-creator"></span>
+    </div>
+    <div class="sheet-people">
+      <h3>Sharing Location</h3>
+      <div id="sheet-people-list"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 const VENUE_LAT = {{LATITUDE}};
 const VENUE_LNG = {{LONGITUDE}};
@@ -60,11 +102,15 @@ const SHARE_TOKEN = "{{SHARE_TOKEN}}";
 const WS_BASE = "{{WS_BASE}}";
 const VENUE_PHOTO_URL = "{{VENUE_PHOTO_URL}}";
 const VENUE_NAME_STR = "{{VENUE_NAME}}";
+const VENUE_ADDRESS_STR = "{{VENUE_ADDRESS}}";
+const CREATOR_NAME_STR = "{{CREATOR_NAME}}";
+const MESSAGE_STR = "{{MESSAGE}}";
 const STORAGE_KEY_ID = 'bounce_guest_id_' + SHARE_TOKEN;
 const STORAGE_KEY_NAME = 'bounce_guest_name_' + SHARE_TOKEN;
 
 let map, ws, geoWatchId;
 let markers = {};
+let peopleData = {}; // track name/type for bottom sheet
 let myGuestId;
 let myName;
 let reconnectTimer;
@@ -122,20 +168,25 @@ function waitForMaps(cb) {
   }, 100);
 }
 
-// Custom OverlayView for venue pin (avoids CORS canvas issues with venue photo)
+// Custom OverlayView for venue pin
 let VenuePinOverlay;
 function defineVenuePinOverlay() {
   VenuePinOverlay = class extends google.maps.OverlayView {
-    constructor(position, photoUrl, name) {
+    constructor(position, photoUrl, name, onClick) {
       super();
       this.position = position;
       this.photoUrl = photoUrl;
       this.name = name;
+      this.onClick = onClick;
       this.div = null;
     }
     onAdd() {
       this.div = document.createElement('div');
       this.div.className = 'venue-pin';
+      this.div.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this.onClick) this.onClick();
+      });
 
       const circle = document.createElement('div');
       circle.className = 'venue-pin-circle';
@@ -145,7 +196,6 @@ function defineVenuePinOverlay() {
         img.src = this.photoUrl;
         img.alt = this.name;
         img.onerror = () => {
-          // Fallback to initial on load failure
           circle.innerHTML = '<span class="initial">' + (this.name[0] || '?').toUpperCase() + '</span>';
         };
         circle.appendChild(img);
@@ -216,18 +266,75 @@ function initMap() {
       ]
     });
 
-    // Venue pin with photo (HTML overlay, no canvas/CORS issues)
+    // Venue pin — tapping opens bottom sheet
     defineVenuePinOverlay();
     const venuePin = new VenuePinOverlay(
       new google.maps.LatLng(VENUE_LAT, VENUE_LNG),
       VENUE_PHOTO_URL,
-      VENUE_NAME_STR
+      VENUE_NAME_STR,
+      openSheet
     );
     venuePin.setMap(map);
+
+    // Close sheet when tapping map
+    map.addListener('click', closeSheet);
   }
 
   connectWebSocket();
   startGeolocation();
+}
+
+// Bottom sheet
+function openSheet() {
+  // Populate sheet
+  const photoEl = document.getElementById('sheet-photo');
+  if (VENUE_PHOTO_URL) {
+    photoEl.innerHTML = '<img src="' + VENUE_PHOTO_URL + '" onerror="this.parentNode.innerHTML=\'<span class=initial>' + (VENUE_NAME_STR[0] || '?').toUpperCase() + '</span>\'">';
+  } else {
+    photoEl.innerHTML = '<span class="initial">' + (VENUE_NAME_STR[0] || '?').toUpperCase() + '</span>';
+  }
+  document.getElementById('sheet-venue-name').textContent = VENUE_NAME_STR;
+  document.getElementById('sheet-venue-address').textContent = VENUE_ADDRESS_STR;
+
+  const msgEl = document.getElementById('sheet-message');
+  if (MESSAGE_STR) {
+    msgEl.textContent = '"' + MESSAGE_STR + '"';
+    msgEl.style.display = 'block';
+  } else {
+    msgEl.style.display = 'none';
+  }
+
+  document.getElementById('sheet-creator').textContent = 'by ' + CREATOR_NAME_STR;
+
+  // People list
+  const listEl = document.getElementById('sheet-people-list');
+  const colors = { app: '#9b59b6', guest: '#2ecc71', self: '#4a9eff' };
+  let html = '';
+
+  // Add self
+  if (myName) {
+    html += '<div class="person-row"><div class="person-avatar" style="background:' + colors.self + '">Y</div><div class="person-name">You (' + myName + ')</div></div>';
+  }
+
+  Object.keys(peopleData).forEach(key => {
+    const p = peopleData[key];
+    const color = p.type === 'app' ? colors.app : colors.guest;
+    const initial = (p.name[0] || '?').toUpperCase();
+    html += '<div class="person-row"><div class="person-avatar" style="background:' + color + '">' + initial + '</div><div class="person-name">' + p.name + '</div></div>';
+  });
+
+  if (!html) {
+    html = '<div style="color:#666;font-size:13px;padding:8px 0">No one else sharing yet</div>';
+  }
+  listEl.innerHTML = html;
+
+  document.getElementById('sheet-backdrop').style.display = 'block';
+  document.getElementById('bottom-sheet').classList.add('open');
+}
+
+function closeSheet() {
+  document.getElementById('bottom-sheet').classList.remove('open');
+  document.getElementById('sheet-backdrop').style.display = 'none';
 }
 
 function connectWebSocket() {
@@ -269,6 +376,7 @@ function handleMessage(msg) {
   switch(msg.type) {
     case 'initial_state':
       Object.keys(markers).forEach(k => { if (k !== 'self') removeMarker(k); });
+      peopleData = {};
       (msg.app_users || []).forEach(u => upsertAppUser(u));
       (msg.guests || []).forEach(g => {
         if (g.guest_id !== myGuestId) upsertGuest(g);
@@ -281,6 +389,7 @@ function handleMessage(msg) {
       break;
     case 'location_sharing_stopped':
       removeMarker('user_' + msg.user_id);
+      delete peopleData['user_' + msg.user_id];
       updateCount();
       break;
     case 'guest_location_shared':
@@ -292,6 +401,7 @@ function handleMessage(msg) {
     case 'guest_location_stopped':
       if (msg.guest_id !== myGuestId) {
         removeMarker('guest_' + msg.guest_id);
+        delete peopleData['guest_' + msg.guest_id];
         updateCount();
       }
       break;
@@ -311,6 +421,7 @@ function upsertAppUser(u) {
   const key = 'user_' + u.user_id;
   const pos = { lat: u.latitude, lng: u.longitude };
   const name = u.nickname || 'App User';
+  peopleData[key] = { name: name, type: 'app' };
   if (markers[key]) {
     markers[key].setPosition(pos);
   } else {
@@ -322,9 +433,7 @@ function upsertAppUser(u) {
         url: createPinSVG('#9b59b6', (name[0] || '?').toUpperCase()),
         scaledSize: new google.maps.Size(52, 52),
         anchor: new google.maps.Point(26, 26)
-      },
-      label: { text: name, color: '#fff', fontSize: '11px', fontWeight: '600',
-               className: 'map-label' }
+      }
     });
   }
 }
@@ -333,6 +442,7 @@ function upsertGuest(g) {
   const key = 'guest_' + g.guest_id;
   const pos = { lat: g.latitude, lng: g.longitude };
   const name = g.display_name || 'Guest';
+  peopleData[key] = { name: name, type: 'guest' };
   if (markers[key]) {
     markers[key].setPosition(pos);
   } else {
@@ -344,9 +454,7 @@ function upsertGuest(g) {
         url: createPinSVG('#2ecc71', (name[0] || '?').toUpperCase()),
         scaledSize: new google.maps.Size(52, 52),
         anchor: new google.maps.Point(26, 26)
-      },
-      label: { text: name, color: '#fff', fontSize: '11px', fontWeight: '600',
-               className: 'map-label' }
+      }
     });
   }
 }
@@ -357,17 +465,16 @@ function upsertSelf(lat, lng) {
   if (markers[key]) {
     markers[key].setPosition(pos);
   } else {
+    const initial = myName ? myName[0].toUpperCase() : 'Y';
     markers[key] = new google.maps.Marker({
       position: pos,
       map: map,
       title: 'You',
       icon: {
-        url: createPinSVG('#4a9eff', 'Y'),
+        url: createPinSVG('#4a9eff', initial),
         scaledSize: new google.maps.Size(52, 52),
         anchor: new google.maps.Point(26, 26)
-      },
-      label: { text: 'You', color: '#fff', fontSize: '11px', fontWeight: '600',
-               className: 'map-label' }
+      }
     });
   }
 }
@@ -392,6 +499,19 @@ function startGeolocation() {
   }
   if (geoWatchId != null) navigator.geolocation.clearWatch(geoWatchId);
 
+  // Get position immediately so pin shows right away
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      upsertSelf(pos.coords.latitude, pos.coords.longitude);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'guest_location', latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
+      }
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 5000 }
+  );
+
+  // Then watch for continuous updates
   geoWatchId = navigator.geolocation.watchPosition(
     (pos) => {
       const lat = pos.coords.latitude;
@@ -421,11 +541,9 @@ document.addEventListener('visibilitychange', () => {
     }
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        upsertSelf(lat, lng);
+        upsertSelf(pos.coords.latitude, pos.coords.longitude);
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'guest_location', latitude: lat, longitude: lng }));
+          ws.send(JSON.stringify({ type: 'guest_location', latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
         }
       }, () => {}, { enableHighAccuracy: true, maximumAge: 5000 });
     }
