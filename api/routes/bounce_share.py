@@ -233,6 +233,11 @@ async def bounce_share_page(
     html = html.replace("{{CREATOR_PROFILE_PIC}}", creator_pic)
     html = html.replace("{{GOOGLE_MAPS_API_KEY}}", settings.GOOGLE_MAPS_API_KEY)
 
+    # Bounce timing
+    bounce_time_iso = bounce.bounce_time.isoformat() if bounce.bounce_time else ""
+    html = html.replace("{{BOUNCE_TIME}}", bounce_time_iso)
+    html = html.replace("{{IS_NOW}}", "true" if bounce.is_now else "false")
+
     # Derive WS base — respect X-Forwarded-Proto (Railway/proxies terminate TLS)
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host") or request.base_url.hostname
@@ -293,13 +298,14 @@ async def bounce_guest_websocket(
             db.add(guest_rec)
         await db.commit()
 
-        # Notify app users that a guest joined
+        # Notify everyone that a guest joined
         join_msg = {
             "type": "guest_joined",
             "bounce_id": bounce_id,
             "guest_id": guest_id,
             "display_name": name
         }
+        await manager.send_to_bounce(bounce_id, join_msg)
         participants = await get_bounce_participants(db, bounce_id)
         for pid in participants:
             await manager.send_to_user(pid, join_msg)

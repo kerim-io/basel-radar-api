@@ -1,53 +1,71 @@
 <style>
-#chat-panel{position:fixed;bottom:0;left:0;right:0;z-index:400;display:none;flex-direction:column;pointer-events:none}
-#chat-toggle{pointer-events:auto;align-self:flex-start;margin:0 0 0 12px;background:rgba(26,26,26,.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid #333;color:#fff;font-size:13px;font-weight:600;padding:8px 14px;border-radius:18px;cursor:pointer;display:flex;align-items:center;gap:6px}
-#chat-toggle .badge{background:#4a9eff;color:#fff;font-size:11px;border-radius:50%;width:18px;height:18px;display:none;align-items:center;justify-content:center;font-weight:700}
-#chat-body{pointer-events:auto;background:rgba(17,17,17,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid #333;display:flex;flex-direction:column;max-height:40vh;overflow:hidden}
-#chat-messages{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:6px;-webkit-overflow-scrolling:touch}
-.chat-msg{font-size:14px;line-height:1.4;padding:6px 10px;border-radius:12px;max-width:85%;word-wrap:break-word}
-.chat-msg.user{background:#222;color:#ddd;align-self:flex-start}
-.chat-msg.user .chat-name{color:#4a9eff;font-weight:600;font-size:12px;margin-bottom:2px}
-.chat-msg.ai{background:rgba(74,158,255,.12);border:1px solid rgba(74,158,255,.2);color:#c0d8f0;align-self:flex-start;font-style:italic}
-.chat-msg.ai .chat-name{color:#4a9eff;font-weight:600;font-size:12px;margin-bottom:2px;font-style:normal}
-.chat-msg.self{background:#4a9eff;color:#fff;align-self:flex-end}
-.chat-system{font-size:12px;color:#666;text-align:center;padding:4px 0}
-#chat-input-bar{display:flex;padding:8px 12px;gap:8px;border-top:1px solid #222;background:rgba(26,26,26,.95)}
-#chat-input{flex:1;background:#222;border:1px solid #333;border-radius:20px;padding:8px 14px;color:#fff;font-size:14px;outline:none}
-#chat-input:focus{border-color:#4a9eff}
-#chat-send{background:#4a9eff;color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#chat-panel{position:fixed;bottom:0;left:0;right:0;z-index:400;display:none;flex-direction:column;max-height:45vh;pointer-events:none}
+#feed-header{pointer-events:auto;display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:rgba(17,17,17,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid #222;cursor:pointer}
+#feed-header .feed-title{font-family:Georgia,'Times New Roman',serif;font-size:14px;font-weight:600;color:#fff;letter-spacing:.3px}
+#feed-header .feed-badge{background:#4a9eff;color:#fff;font-size:10px;border-radius:50%;min-width:18px;height:18px;display:none;align-items:center;justify-content:center;font-weight:700;padding:0 5px}
+#feed-header .feed-chevron{color:#666;font-size:18px;transition:transform .25s ease}
+#feed-header .feed-chevron.up{transform:rotate(180deg)}
+#feed-messages{pointer-events:auto;flex:1;overflow-y:auto;padding:6px 16px 4px;background:rgba(17,17,17,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;flex-direction:column;gap:4px;-webkit-overflow-scrolling:touch;transition:max-height .3s ease;max-height:0;overflow:hidden}
+#feed-messages.expanded{max-height:30vh;overflow-y:auto}
+.feed-item{display:flex;gap:8px;align-items:flex-start;padding:5px 0;animation:feedIn .3s ease}
+@keyframes feedIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.feed-avatar{width:28px;height:28px;border-radius:50%;background:#333;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;color:#fff;font-family:Georgia,'Times New Roman',serif}
+.feed-avatar.ai{background:rgba(74,158,255,.2);color:#4a9eff}
+.feed-avatar.self{background:#4a9eff;color:#fff}
+.feed-body{flex:1;min-width:0}
+.feed-name{font-size:11px;font-weight:600;color:#4a9eff;margin-bottom:1px;font-family:Georgia,'Times New Roman',serif}
+.feed-name.ai{color:#7bb8ff}
+.feed-name.self{color:#fff}
+.feed-text{font-size:13px;line-height:1.35;color:#ccc;word-wrap:break-word}
+.feed-text.ai{color:#a8cce8;font-style:italic}
+.feed-text.self{color:#fff}
+.feed-system{font-size:11px;color:#555;text-align:center;padding:3px 0;font-family:Georgia,'Times New Roman',serif}
+.feed-time{font-size:10px;color:#444;margin-top:1px}
+#feed-input-bar{pointer-events:auto;display:flex;padding:8px 12px;gap:8px;background:rgba(17,17,17,.98);border-top:1px solid #1a1a1a}
+#feed-input{flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:20px;padding:9px 14px;color:#fff;font-size:14px;outline:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#feed-input:focus{border-color:#4a9eff}
+#feed-input::placeholder{color:#555}
+#feed-send{background:#4a9eff;color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .2s}
+#feed-send:active{opacity:.7}
 </style>
 
 <div id="chat-panel">
-  <button id="chat-toggle" onclick="toggleChat()">
-    Chat <span class="badge" id="chat-badge">0</span>
-  </button>
-  <div id="chat-body" style="display:none">
-    <div id="chat-messages"></div>
-    <div id="chat-input-bar">
-      <input id="chat-input" type="text" placeholder="Say something..." maxlength="500" autocomplete="off">
-      <button id="chat-send" onclick="sendChat()">&#9654;</button>
+  <div id="feed-header" onclick="toggleFeed()">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="feed-title">Live Feed</span>
+      <span class="feed-badge" id="feed-badge">0</span>
     </div>
+    <span class="feed-chevron" id="feed-chevron">&#9650;</span>
+  </div>
+  <div id="feed-messages"></div>
+  <div id="feed-input-bar">
+    <input id="feed-input" type="text" placeholder="Say something..." maxlength="500" autocomplete="off">
+    <button id="feed-send" onclick="sendChat()">&#9654;</button>
   </div>
 </div>
 
 <script>
-var chatExpanded = false;
+var feedExpanded = true;
 var unreadCount = 0;
 
-function toggleChat() {
-  chatExpanded = !chatExpanded;
-  var body = document.getElementById('chat-body');
-  body.style.display = chatExpanded ? 'flex' : 'none';
-  if (chatExpanded) {
+function toggleFeed() {
+  feedExpanded = !feedExpanded;
+  var msgs = document.getElementById('feed-messages');
+  var chev = document.getElementById('feed-chevron');
+  if (feedExpanded) {
+    msgs.classList.add('expanded');
+    chev.classList.add('up');
     unreadCount = 0;
-    updateChatBadge();
-    scrollChat();
-    document.getElementById('chat-input').focus();
+    updateFeedBadge();
+    scrollFeed();
+  } else {
+    msgs.classList.remove('expanded');
+    chev.classList.remove('up');
   }
 }
 
-function updateChatBadge() {
-  var badge = document.getElementById('chat-badge');
+function updateFeedBadge() {
+  var badge = document.getElementById('feed-badge');
   if (unreadCount > 0) {
     badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
     badge.style.display = 'flex';
@@ -56,9 +74,9 @@ function updateChatBadge() {
   }
 }
 
-function scrollChat() {
-  var el = document.getElementById('chat-messages');
-  el.scrollTop = el.scrollHeight;
+function scrollFeed() {
+  var el = document.getElementById('feed-messages');
+  setTimeout(function() { el.scrollTop = el.scrollHeight; }, 50);
 }
 
 function escapeHtml(str) {
@@ -67,50 +85,96 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
-function appendChatMsg(sender, text, isAi, isSelf) {
-  var container = document.getElementById('chat-messages');
-  var div = document.createElement('div');
+function formatFeedTime(ts) {
+  if (!ts) return '';
+  var d = new Date(ts * 1000);
+  var h = d.getHours();
+  var m = d.getMinutes();
+  return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+}
+
+function appendChatMsg(sender, text, isAi, isSelf, timestamp) {
+  var container = document.getElementById('feed-messages');
+  var item = document.createElement('div');
+  item.className = 'feed-item';
+
+  var avatar = document.createElement('div');
+  var initial = (sender && sender[0]) ? sender[0].toUpperCase() : '?';
+
   if (isAi) {
-    div.className = 'chat-msg ai';
-    div.innerHTML = '<div class="chat-name">Bounce AI</div>' + escapeHtml(text);
+    avatar.className = 'feed-avatar ai';
+    avatar.textContent = 'AI';
   } else if (isSelf) {
-    div.className = 'chat-msg self';
-    div.textContent = text;
+    avatar.className = 'feed-avatar self';
+    avatar.textContent = initial;
   } else {
-    div.className = 'chat-msg user';
-    div.innerHTML = '<div class="chat-name">' + escapeHtml(sender) + '</div>' + escapeHtml(text);
+    avatar.className = 'feed-avatar';
+    avatar.textContent = initial;
   }
-  container.appendChild(div);
-  scrollChat();
-  if (!chatExpanded) {
+
+  var body = document.createElement('div');
+  body.className = 'feed-body';
+
+  var nameEl = document.createElement('div');
+  nameEl.className = 'feed-name' + (isAi ? ' ai' : isSelf ? ' self' : '');
+  nameEl.textContent = isAi ? 'Bounce AI' : (isSelf ? 'You' : sender);
+
+  var textEl = document.createElement('div');
+  textEl.className = 'feed-text' + (isAi ? ' ai' : isSelf ? ' self' : '');
+  textEl.textContent = text;
+
+  body.appendChild(nameEl);
+  body.appendChild(textEl);
+
+  if (timestamp) {
+    var timeEl = document.createElement('div');
+    timeEl.className = 'feed-time';
+    timeEl.textContent = formatFeedTime(timestamp);
+    body.appendChild(timeEl);
+  }
+
+  item.appendChild(avatar);
+  item.appendChild(body);
+  container.appendChild(item);
+  scrollFeed();
+
+  if (!feedExpanded) {
     unreadCount++;
-    updateChatBadge();
+    updateFeedBadge();
   }
 }
 
 function appendSystemMsg(text) {
-  var container = document.getElementById('chat-messages');
+  var container = document.getElementById('feed-messages');
   var div = document.createElement('div');
-  div.className = 'chat-system';
+  div.className = 'feed-system';
   div.textContent = text;
   container.appendChild(div);
-  scrollChat();
+  scrollFeed();
 }
 
 function sendChat() {
-  var input = document.getElementById('chat-input');
+  var input = document.getElementById('feed-input');
   var text = input.value.trim();
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: 'chat_message', text: text }));
-  appendChatMsg(myName, text, false, true);
+  appendChatMsg(myName, text, false, true, Date.now() / 1000);
   input.value = '';
 }
 
 document.addEventListener('keydown', function(e) {
-  if (e.target.id === 'chat-input' && e.key === 'Enter') {
+  if (e.target.id === 'feed-input' && e.key === 'Enter') {
     sendChat();
   }
 });
+
+// Start expanded
+(function() {
+  var msgs = document.getElementById('feed-messages');
+  var chev = document.getElementById('feed-chevron');
+  msgs.classList.add('expanded');
+  chev.classList.add('up');
+})();
 
 // Monkey-patch handleMessage to intercept chat-related messages
 var _origHandleMessage = handleMessage;
@@ -119,15 +183,15 @@ handleMessage = function(msg) {
 
   if (msg.type === 'chat_message') {
     if (!msg.is_ai && msg.guest_id === myGuestId) return;
-    appendChatMsg(msg.sender, msg.text, msg.is_ai, false);
+    appendChatMsg(msg.sender, msg.text, msg.is_ai, false, msg.timestamp);
   }
   if (msg.type === 'chat_history') {
     (msg.messages || []).forEach(function(m) {
-      appendChatMsg(m.sender, m.text, m.is_ai, false);
+      appendChatMsg(m.sender, m.text, m.is_ai, false, m.timestamp);
     });
   }
   if (msg.type === 'guest_joined' && msg.guest_id !== myGuestId) {
-    appendSystemMsg(msg.display_name + ' joined');
+    appendSystemMsg(msg.display_name + ' joined the bounce');
   }
   if (msg.type === 'guest_left' && msg.guest_id !== myGuestId) {
     appendSystemMsg(msg.display_name + ' left');
