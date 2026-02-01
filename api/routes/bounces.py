@@ -875,18 +875,27 @@ async def accept_bounce_invite(
 
     logger.info(f"Invite accepted: bounce {bounce_id}, user {current_user.id}")
 
-    # Notify the bounce creator
-    if bounce.creator_id in manager.active_connections:
-        for conn in manager.active_connections[bounce.creator_id]:
-            try:
-                await conn.send_json({
-                    "type": "bounce_invite_update",
-                    "bounce_id": bounce_id,
-                    "user_id": current_user.id,
-                    "status": "accepted"
-                })
-            except Exception:
-                pass
+    # Notify all participants (push + in-app)
+    from services.tasks import send_websocket_notification
+    actor_name = current_user.nickname or current_user.first_name or "Someone"
+    participants = await get_bounce_participants(db, bounce_id)
+    for pid in participants:
+        if pid == current_user.id:
+            continue
+        payload = NotificationPayload(
+            notification_type=NotificationType.BOUNCE_ACCEPTED,
+            title="Bounce Accepted",
+            body=f"{actor_name} is coming to {bounce.venue_name}",
+            actor_id=current_user.id,
+            actor_nickname=actor_name,
+            actor_profile_picture=current_user.profile_picture or current_user.instagram_profile_pic,
+            bounce_id=bounce.id,
+            bounce_venue_name=bounce.venue_name,
+            bounce_place_id=bounce.place_id
+        )
+        payload_dict = payload_to_dict(payload)
+        await send_websocket_notification(pid, payload_dict)
+        enqueue_notification(pid, payload_dict)
 
     return {"success": True, "message": "Invite accepted"}
 

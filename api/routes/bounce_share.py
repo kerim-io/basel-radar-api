@@ -310,6 +310,22 @@ async def bounce_guest_websocket(
         for pid in participants:
             await manager.send_to_user(pid, join_msg)
 
+        # Send push notification to app participants
+        from services.apns_service import NotificationPayload, NotificationType
+        from services.tasks import enqueue_notification, payload_to_dict
+        for pid in participants:
+            payload = NotificationPayload(
+                notification_type=NotificationType.GUEST_JOINED,
+                title="Guest Joined",
+                body=f"{name} joined the bounce at {bounce.venue_name}",
+                actor_id=0,
+                actor_nickname=name,
+                bounce_id=bounce.id,
+                bounce_venue_name=bounce.venue_name,
+                bounce_place_id=bounce.place_id
+            )
+            enqueue_notification(pid, payload_to_dict(payload))
+
         # Send initial state
         initial_state = await _build_initial_state(db, bounce_id)
         logger.info(f"Sending initial_state to guest '{name}': {len(initial_state.get('app_users', []))} app users, {len(initial_state.get('guests', []))} guests")

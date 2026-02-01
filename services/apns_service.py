@@ -39,6 +39,8 @@ class NotificationType(str, Enum):
     CLOSE_FRIEND_REQUEST = "close_friend_request"
     CLOSE_FRIEND_ACCEPTED = "close_friend_accepted"
     LOCATION_SHARE = "location_share"
+    BOUNCE_ACCEPTED = "bounce_accepted"
+    GUEST_JOINED = "guest_joined"
 
 
 @dataclass
@@ -150,6 +152,8 @@ class APNsService:
             NotificationType.FRIEND_AT_VENUE: "friends_at_same_venue",
             NotificationType.FRIEND_LEFT_VENUE: "friends_leaving_venue",
             NotificationType.CLOSE_FRIEND_CHECKIN: "close_friend_checkins",
+            NotificationType.BOUNCE_ACCEPTED: "bounce_invites",
+            NotificationType.GUEST_JOINED: "bounce_invites",
         }
         return mapping.get(notification_type, "push_enabled")
 
