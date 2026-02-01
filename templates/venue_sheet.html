@@ -18,6 +18,7 @@
 #bottom-sheet .person-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:#fff;flex-shrink:0}
 #bottom-sheet .person-name{font-size:14px;flex:1}
 #bottom-sheet .person-dist{font-size:12px;color:#888;white-space:nowrap}
+#bottom-sheet .person-status{font-size:11px;color:#555;white-space:nowrap}
 .vs-close{position:absolute;top:0;right:0;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.15);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:none;color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;cursor:pointer}
 #sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:550;display:none}
 </style>
@@ -39,13 +40,48 @@
       <span id="sheet-creator"></span>
     </div>
     <div class="sheet-people">
-      <h3>Sharing Location</h3>
+      <h3>Attendees</h3>
       <div id="sheet-people-list"></div>
     </div>
   </div>
 </div>
 
 <script>
+function buildAttendeeRow(a, colors) {
+  var isGuest = a.type === 'guest';
+  var color = isGuest ? colors.guest : colors.app;
+  var initial = (a.nickname[0] || '?').toUpperCase();
+  var tap, key;
+
+  if (isGuest) {
+    key = 'guest_' + a.guest_id;
+    tap = 'onclick="closeSheet();openGuestUserSheet(\'' + a.nickname.replace(/'/g, "\\'") + '\')"';
+  } else {
+    key = 'user_' + a.user_id;
+    tap = 'onclick="closeSheet();openUserSheet(' + a.user_id + ')"';
+  }
+
+  // Distance if sharing location, otherwise status text
+  var pos = pinPositions[key];
+  var rightHtml = '';
+  if (pos) {
+    rightHtml = '<div class="person-dist">' + formatDist(haversineDist(pos.lat, pos.lng, VENUE_LAT, VENUE_LNG)) + '</div>';
+  } else if (isGuest && !a.is_connected) {
+    rightHtml = '<div class="person-status">offline</div>';
+  }
+
+  var pic = !isGuest ? proxyUrl(a.profile_picture) : null;
+  var avatarHtml;
+  if (pic) {
+    avatarHtml = '<div class="person-avatar" style="border:2px solid ' + color + ';padding:0;overflow:hidden"><img src="' + pic + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentNode.style.background=\'' + color + '\';this.parentNode.innerHTML=\'' + initial + '\'"></div>';
+  } else {
+    avatarHtml = '<div class="person-avatar" style="background:' + color + '">' + initial + '</div>';
+  }
+
+  var creatorBadge = a.is_creator ? ' <span style="font-size:11px;color:#888">· host</span>' : '';
+  return '<div class="person-row" style="cursor:pointer" ' + tap + '>' + avatarHtml + '<div class="person-name">' + a.nickname + creatorBadge + '</div>' + rightHtml + '</div>';
+}
+
 function openSheet() {
   deactivatePin();
   if (venuePinRef && venuePinRef.div) {
@@ -73,35 +109,47 @@ function openSheet() {
 
   var listEl = document.getElementById('sheet-people-list');
   var colors = { app: '#9b59b6', guest: '#2ecc71', self: '#4a9eff' };
-  var html = '';
 
+  // Show self row immediately
+  var selfHtml = '';
   if (myName) {
     var selfPos = pinPositions['self'];
     var selfDist = selfPos ? '<div class="person-dist">' + formatDist(haversineDist(selfPos.lat, selfPos.lng, VENUE_LAT, VENUE_LNG)) + '</div>' : '';
-    html += '<div class="person-row"><div class="person-avatar" style="background:' + colors.self + '">Y</div><div class="person-name">You (' + myName + ')</div>' + selfDist + '</div>';
+    selfHtml = '<div class="person-row"><div class="person-avatar" style="background:' + colors.self + '">Y</div><div class="person-name">You (' + myName + ')</div>' + selfDist + '</div>';
   }
-
-  Object.keys(peopleData).forEach(function(key) {
-    var p = peopleData[key];
-    var color = p.type === 'app' ? colors.app : colors.guest;
-    var initial = (p.name[0] || '?').toUpperCase();
-    var tap = p.type === 'app' && p.user_id ? 'onclick="closeSheet();openUserSheet(' + p.user_id + ')"' : 'onclick="closeSheet();openGuestUserSheet(\'' + p.name.replace(/'/g, "\\'") + '\')"';
-    var pos = pinPositions[key];
-    var distHtml = pos ? '<div class="person-dist">' + formatDist(haversineDist(pos.lat, pos.lng, VENUE_LAT, VENUE_LNG)) + '</div>' : '';
-    if (p.pic) {
-      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="border:2px solid ' + color + ';padding:0;overflow:hidden"><img src="' + p.pic + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentNode.style.background=\'' + color + '\';this.parentNode.innerHTML=\'' + initial + '\'"></div><div class="person-name">' + p.name + '</div>' + distHtml + '</div>';
-    } else {
-      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="background:' + color + '">' + initial + '</div><div class="person-name">' + p.name + '</div>' + distHtml + '</div>';
-    }
-  });
-
-  if (!html) {
-    html = '<div style="color:#666;font-size:13px;padding:8px 0">No one else sharing yet</div>';
-  }
-  listEl.innerHTML = html;
+  listEl.innerHTML = selfHtml + '<div style="color:#666;font-size:13px;padding:8px 0">Loading...</div>';
 
   document.getElementById('sheet-backdrop').style.display = 'block';
   document.getElementById('bottom-sheet').classList.add('open');
+
+  // Fetch full attendee list from server
+  fetch('/bounce/share/' + SHARE_TOKEN + '/attendees')
+    .then(function(r) { return r.ok ? r.json() : Promise.reject(); })
+    .then(function(data) {
+      var html = selfHtml;
+      (data.attendees || []).forEach(function(a) {
+        // Skip self (current guest user)
+        if (a.type === 'guest' && a.guest_id === myGuestId) return;
+        html += buildAttendeeRow(a, colors);
+      });
+      if (!html) {
+        html = '<div style="color:#666;font-size:13px;padding:8px 0">No attendees yet</div>';
+      }
+      listEl.innerHTML = html;
+    })
+    .catch(function() {
+      // Fallback to live-location-only data
+      var html = selfHtml;
+      Object.keys(peopleData).forEach(function(key) {
+        var p = peopleData[key];
+        var a = { type: p.type, nickname: p.name, profile_picture: p.pic || '', is_creator: false };
+        if (p.type === 'app' && p.user_id) a.user_id = p.user_id;
+        if (p.type === 'guest') a.guest_id = key.replace('guest_', '');
+        html += buildAttendeeRow(a, colors);
+      });
+      if (!html) html = '<div style="color:#666;font-size:13px;padding:8px 0">No attendees yet</div>';
+      listEl.innerHTML = html;
+    });
 }
 
 function closeSheet() {

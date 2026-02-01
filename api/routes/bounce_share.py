@@ -87,6 +87,67 @@ async def image_proxy(url: str = Query(...)):
         raise HTTPException(status_code=502, detail="Failed to fetch image")
 
 
+@router.get("/bounce/share/{share_token}/attendees")
+async def bounce_share_attendees(
+    share_token: str,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Return all attendees for a shared bounce: creator, invited users, and connected guests."""
+    result = await db.execute(
+        select(Bounce).where(Bounce.share_token == share_token, Bounce.status == 'active')
+    )
+    bounce = result.scalar_one_or_none()
+    if not bounce:
+        raise HTTPException(status_code=404, detail="Bounce not found or inactive")
+
+    # Creator
+    result = await db.execute(select(User).where(User.id == bounce.creator_id))
+    creator = result.scalar_one_or_none()
+
+    attendees = []
+    if creator:
+        pic = creator.profile_picture or creator.instagram_profile_pic or creator.profile_picture_1 or ""
+        attendees.append({
+            "type": "app",
+            "user_id": creator.id,
+            "nickname": creator.nickname or creator.first_name or "User",
+            "profile_picture": pic,
+            "is_creator": True,
+        })
+
+    # Invited users
+    result = await db.execute(
+        select(BounceInvite, User)
+        .join(User, BounceInvite.user_id == User.id)
+        .where(BounceInvite.bounce_id == bounce.id)
+    )
+    for invite, user in result.all():
+        if user.id == bounce.creator_id:
+            continue
+        pic = user.profile_picture or user.instagram_profile_pic or user.profile_picture_1 or ""
+        attendees.append({
+            "type": "app",
+            "user_id": user.id,
+            "nickname": user.nickname or user.first_name or "User",
+            "profile_picture": pic,
+            "is_creator": False,
+        })
+
+    # Connected guests (ever joined via share link for this bounce)
+    result = await db.execute(
+        select(BounceGuestLocation).where(BounceGuestLocation.bounce_id == bounce.id)
+    )
+    for guest in result.scalars().all():
+        attendees.append({
+            "type": "guest",
+            "guest_id": guest.guest_id,
+            "nickname": guest.display_name or "Guest",
+            "is_connected": guest.is_connected,
+        })
+
+    return {"attendees": attendees}
+
+
 @router.get("/bounce/share/{share_token}/user/{user_id}")
 async def bounce_share_user_profile(
     share_token: str,
