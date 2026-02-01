@@ -178,13 +178,20 @@ GOOGLE_PLACES_AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autoco
 GOOGLE_PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 GOOGLE_PLACES_DETAILS_URL = "https://maps.googleapis.com/maps/api/place/details/json"
 
-# Place types for venues (max 5 for Google Places API)
-VENUE_TYPES = [
+# Place types for venues (max 5 per Google Places API request)
+VENUE_TYPES_A = [
     "restaurant",
     "bar",
     "cafe",
     "night_club",
     "hotel",
+]
+VENUE_TYPES_B = [
+    "gym",
+    "spa",
+    "event_venue",
+    "sports_club",
+    "lodging",
 ]
 
 # SSL context for aiohttp requests to Google APIs
@@ -346,123 +353,135 @@ async def places_autocomplete(
         "X-Goog-Api-Key": settings.GOOGLE_MAPS_API_KEY,
     }
 
-    body = {
-        "input": query,
-        "includedPrimaryTypes": VENUE_TYPES,
-    }
-
-    # Add location bias if coordinates provided
+    location_bias = None
     if lat is not None and lng is not None:
-        body["locationBias"] = {
+        location_bias = {
             "circle": {
                 "center": {"latitude": lat, "longitude": lng},
                 "radius": 5000.0  # 5km bias
             }
         }
 
+    # Build two request bodies — one per type batch (API allows max 5 types)
+    bodies = []
+    for type_batch in [VENUE_TYPES_A, VENUE_TYPES_B]:
+        b = {"input": query, "includedPrimaryTypes": type_batch}
+        if location_bias:
+            b["locationBias"] = location_bias
+        bodies.append(b)
+
+    async def _autocomplete_request(session, body, ssl_ctx):
+        """Fire one autocomplete request, return suggestions list or []."""
+        try:
+            async with session.post(GOOGLE_PLACES_AUTOCOMPLETE_URL, headers=headers, json=body, ssl=ssl_ctx) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return []
+                return data.get("suggestions", [])
+        except Exception:
+            return []
+
     try:
         ssl_ctx = get_ssl_context()
         async with aiohttp.ClientSession() as session:
-            async with session.post(GOOGLE_PLACES_AUTOCOMPLETE_URL, headers=headers, json=body, ssl=ssl_ctx) as response:
-                data = await response.json()
+            # Fire both type-batch requests in parallel
+            results_a, results_b = await asyncio.gather(
+                _autocomplete_request(session, bodies[0], ssl_ctx),
+                _autocomplete_request(session, bodies[1], ssl_ctx),
+            )
 
-                if response.status != 200:
-                    error_msg = data.get("error", {}).get("message", "Unknown error")
-                    # If Google fails but we have cache results, return those
-                    if cached_results:
-                        predictions = [PlacePrediction(**{**p, "from_cache": True}) for p in cached_results]
-                        return AutocompleteResponse(predictions=predictions, from_cache=True)
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Places API error: {error_msg}"
-                    )
+            # Merge and deduplicate raw suggestions
+            seen_ids = set()
+            raw_predictions = []
+            for pred in results_a + results_b:
+                pid = pred.get("placePrediction", {}).get("placeId")
+                if pid and pid not in seen_ids:
+                    raw_predictions.append(pred)
+                    seen_ids.add(pid)
 
-                raw_predictions = data.get("suggestions", [])
+            if not raw_predictions:
+                if cached_results:
+                    predictions = [PlacePrediction(**{**p, "from_cache": True}) for p in cached_results]
+                    return AutocompleteResponse(predictions=predictions, from_cache=True)
+                return AutocompleteResponse(predictions=[])
 
-                if not raw_predictions:
-                    # No Google results - return cache results if any
-                    if cached_results:
-                        predictions = [PlacePrediction(**{**p, "from_cache": True}) for p in cached_results]
-                        return AutocompleteResponse(predictions=predictions, from_cache=True)
-                    return AutocompleteResponse(predictions=[])
-
-                # Fetch details for all predictions in parallel
-                detail_tasks = [
-                    fetch_place_details_for_autocomplete(
-                        session,
-                        pred.get("placePrediction", {}).get("placeId", ""),
-                        ssl_ctx,
-                        settings.GOOGLE_MAPS_API_KEY
-                    )
-                    for pred in raw_predictions
-                    if pred.get("placePrediction")
-                ]
-                details_results = await asyncio.gather(*detail_tasks)
-
-                # Build predictions with coordinates and distance
-                google_predictions = []
-                detail_idx = 0
-                for pred in raw_predictions:
-                    place_pred = pred.get("placePrediction")
-                    if not place_pred:
-                        continue
-
-                    place_lat, place_lng, photo_url, place_types = details_results[detail_idx]
-                    detail_idx += 1
-
-                    # Calculate distance if we have both user location and place location
-                    distance_meters = None
-                    if lat is not None and lng is not None and place_lat is not None and place_lng is not None:
-                        distance_meters = haversine_distance_meters(lat, lng, place_lat, place_lng)
-
-                    # Extract structured text from new API format
-                    structured_format = place_pred.get("structuredFormat", {})
-                    main_text = structured_format.get("mainText", {}).get("text", "")
-                    secondary_text = structured_format.get("secondaryText", {}).get("text", "")
-
-                    google_predictions.append(PlacePrediction(
-                        place_id=place_pred.get("placeId", ""),
-                        name=main_text or place_pred.get("text", {}).get("text", ""),
-                        address=secondary_text,
-                        full_description=place_pred.get("text", {}).get("text", ""),
-                        latitude=place_lat,
-                        longitude=place_lng,
-                        distance_meters=distance_meters,
-                        photo_url=photo_url,
-                        types=place_types or [],
-                        from_cache=False  # From Google API
-                    ))
-
-                # 4. Merge cached results with Google results (cached first, deduped)
-                seen_place_ids = set()
-                merged_predictions = []
-
-                # Add cached results first (they have bounce_count scoring)
-                for cached in cached_results:
-                    pid = cached.get("place_id")
-                    if pid and pid not in seen_place_ids:
-                        merged_predictions.append(PlacePrediction(**{**cached, "from_cache": True}))
-                        seen_place_ids.add(pid)
-
-                # Add Google results (skip duplicates)
-                for gp in google_predictions:
-                    if gp.place_id not in seen_place_ids:
-                        merged_predictions.append(gp)
-                        seen_place_ids.add(gp.place_id)
-
-                # Sort by distance (closest first) if distances are available
-                merged_predictions.sort(key=lambda p: p.distance_meters if p.distance_meters is not None else float('inf'))
-
-                # Limit to 10 results
-                final_predictions = merged_predictions[:10]
-
-                # 5. Index new Google results to global cache (fire-and-forget)
-                asyncio.create_task(_index_predictions_to_global_cache(google_predictions))
-
-                return AutocompleteResponse(
-                    predictions=final_predictions,
-                    from_cache=len(cached_results) > 0 and len(google_predictions) == 0
+            # Fetch details for all predictions in parallel
+            detail_tasks = [
+                fetch_place_details_for_autocomplete(
+                    session,
+                    pred.get("placePrediction", {}).get("placeId", ""),
+                    ssl_ctx,
+                    settings.GOOGLE_MAPS_API_KEY
                 )
+                for pred in raw_predictions
+                if pred.get("placePrediction")
+            ]
+            details_results = await asyncio.gather(*detail_tasks)
+
+            # Build predictions with coordinates and distance
+            google_predictions = []
+            detail_idx = 0
+            for pred in raw_predictions:
+                place_pred = pred.get("placePrediction")
+                if not place_pred:
+                    continue
+
+                place_lat, place_lng, photo_url, place_types = details_results[detail_idx]
+                detail_idx += 1
+
+                # Calculate distance if we have both user location and place location
+                distance_meters = None
+                if lat is not None and lng is not None and place_lat is not None and place_lng is not None:
+                    distance_meters = haversine_distance_meters(lat, lng, place_lat, place_lng)
+
+                # Extract structured text from new API format
+                structured_format = place_pred.get("structuredFormat", {})
+                main_text = structured_format.get("mainText", {}).get("text", "")
+                secondary_text = structured_format.get("secondaryText", {}).get("text", "")
+
+                google_predictions.append(PlacePrediction(
+                    place_id=place_pred.get("placeId", ""),
+                    name=main_text or place_pred.get("text", {}).get("text", ""),
+                    address=secondary_text,
+                    full_description=place_pred.get("text", {}).get("text", ""),
+                    latitude=place_lat,
+                    longitude=place_lng,
+                    distance_meters=distance_meters,
+                    photo_url=photo_url,
+                    types=place_types or [],
+                    from_cache=False,
+                ))
+
+            # 4. Merge cached results with Google results (cached first, deduped)
+            seen_place_ids = set()
+            merged_predictions = []
+
+            # Add cached results first (they have bounce_count scoring)
+            for cached in cached_results:
+                pid = cached.get("place_id")
+                if pid and pid not in seen_place_ids:
+                    merged_predictions.append(PlacePrediction(**{**cached, "from_cache": True}))
+                    seen_place_ids.add(pid)
+
+            # Add Google results (skip duplicates)
+            for gp in google_predictions:
+                if gp.place_id not in seen_place_ids:
+                    merged_predictions.append(gp)
+                    seen_place_ids.add(gp.place_id)
+
+            # Sort by distance (closest first) if distances are available
+            merged_predictions.sort(key=lambda p: p.distance_meters if p.distance_meters is not None else float('inf'))
+
+            # Limit to 10 results
+            final_predictions = merged_predictions[:10]
+
+            # 5. Index new Google results to global cache (fire-and-forget)
+            asyncio.create_task(_index_predictions_to_global_cache(google_predictions))
+
+            return AutocompleteResponse(
+                predictions=final_predictions,
+                from_cache=len(cached_results) > 0 and len(google_predictions) == 0
+            )
 
     except aiohttp.ClientError as e:
         # If network fails but we have cache results, return those
