@@ -154,7 +154,7 @@ function joinBounce() {
 
   document.getElementById('overlay').style.display = 'none';
   document.getElementById('info-bar').style.display = 'block';
-  initMap();
+  waitForMaps(() => initMap());
 }
 
 // Auto-join if returning user
@@ -552,6 +552,7 @@ function upsertGuest(g) {
 }
 
 function upsertSelf(lat, lng) {
+  console.log('[bounce-geo] upsertSelf', lat, lng);
   const key = 'self';
   if (markers[key]) {
     if (markers[key] instanceof google.maps.Marker) {
@@ -605,7 +606,7 @@ function startGeolocation() {
         ws.send(JSON.stringify({ type: 'guest_location', latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
       }
     },
-    () => {},
+    (err) => { console.warn('[bounce-geo] getCurrentPosition error:', err.code, err.message); },
     { enableHighAccuracy: true, maximumAge: 5000 }
   );
 

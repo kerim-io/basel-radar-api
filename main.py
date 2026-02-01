@@ -1,39 +1,56 @@
-from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-import logging
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from db.database import create_db_and_tables
-from api.routes import auth, users, close_friends, websocket, geocoding, bounces, notifications, checkins, admin, bounce_share
-from api.routes.websocket import manager as ws_manager
-from api.routes.close_friends import start_silent_push_loop, stop_silent_push_loop
 # Instagram 2FA - uncomment when ready to use
 # from api.routes import instagram_verify
 # from services.instagram_2fa import start_ig_poller, stop_ig_poller
 from api.dependencies import limiter
-from services.redis import close_redis
+from api.routes import (
+    admin,
+    auth,
+    bounce_share,
+    bounces,
+    checkins,
+    close_friends,
+    geocoding,
+    notifications,
+    users,
+    websocket,
+)
+from api.routes.close_friends import start_silent_push_loop, stop_silent_push_loop
+from api.routes.websocket import manager as ws_manager
 from core.config import settings
+from db.database import create_db_and_tables
+from services.redis import close_redis
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 # Set specific log levels
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # Reduce noise from access logs
-logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)  # Reduce SQL query logs
+logging.getLogger("uvicorn.access").setLevel(
+    logging.WARNING
+)  # Reduce noise from access logs
+logging.getLogger("sqlalchemy.engine").setLevel(
+    logging.WARNING
+)  # Reduce SQL query logs
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
+
     logger = logging.getLogger(__name__)
 
     # Initialize database (with timeout so slow DB doesn't block startup)
@@ -68,10 +85,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Art Basel Miami API",
+    title="Bouce API",
     description="Micro social media for Art Basel Miami",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Rate limiting
@@ -80,7 +97,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Add CORS middleware for WebSocket and HTTP connections
 # Configure based on environment (development vs production)
-allowed_origins = settings.ALLOWED_ORIGINS.split(",") if hasattr(settings, "ALLOWED_ORIGINS") and settings.ALLOWED_ORIGINS else ["*"]
+allowed_origins = (
+    settings.ALLOWED_ORIGINS.split(",")
+    if hasattr(settings, "ALLOWED_ORIGINS") and settings.ALLOWED_ORIGINS
+    else ["*"]
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -117,7 +138,7 @@ app.include_router(bounce_share.router)
 
 @app.get("/")
 async def root():
-    return {"message": "Art Basel Miami API", "status": "running"}
+    return {"message": "Bounce API", "status": "running"}
 
 
 @app.get("/health")
@@ -132,7 +153,4 @@ async def health():
     except Exception:
         pass
 
-    return {
-        "status": "healthy",
-        "redis": "connected" if redis_ok else "disconnected"
-    }
+    return {"status": "healthy", "redis": "connected" if redis_ok else "disconnected"}
