@@ -135,6 +135,7 @@ async def bounce_guest_websocket(
 
         # Send initial state
         initial_state = await _build_initial_state(db, bounce_id)
+        logger.info(f"Sending initial_state to guest '{name}': {len(initial_state.get('app_users', []))} app users, {len(initial_state.get('guests', []))} guests")
         await websocket.send_json(initial_state)
 
         # Message loop

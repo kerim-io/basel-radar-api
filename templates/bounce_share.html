@@ -198,8 +198,12 @@ function initMap() {
         { elementType: 'labels.text.stroke', stylers: [{ color: '#1a3646' }] },
         { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#304a7d' }] },
         { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#255763' }] },
+        { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#98b7d6' }] },
         { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1626' }] },
-        { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#283d6a' }] }
+        { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+        { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+        { featureType: 'administrative.land_parcel', stylers: [{ visibility: 'off' }] },
+        { featureType: 'landscape.man_made', elementType: 'labels', stylers: [{ visibility: 'off' }] }
       ]
     });
 
@@ -246,6 +250,7 @@ function connectWebSocket() {
     if (event.data === 'pong') return;
     try {
       const msg = JSON.parse(event.data);
+      console.log('[bounce-ws]', msg.type, msg);
       handleMessage(msg);
     } catch(e) {}
   };
