@@ -224,6 +224,7 @@ function defineVenuePinOverlay() {
       this.photoUrl = photoUrl;
       this.name = name;
       this.onClick = onClick;
+      this.pixelOffsetX = 0;
       this.div = null;
     }
     onAdd() {
@@ -267,9 +268,13 @@ function defineVenuePinOverlay() {
       const projection = this.getProjection();
       const pos = projection.fromLatLngToDivPixel(this.position);
       if (pos) {
-        this.div.style.left = pos.x + 'px';
+        this.div.style.left = (pos.x + this.pixelOffsetX) + 'px';
         this.div.style.top = pos.y + 'px';
       }
+    }
+    setPixelOffsetX(ox) {
+      this.pixelOffsetX = ox;
+      this.draw();
     }
     onRemove() {
       if (this.div) {
@@ -502,28 +507,59 @@ function createUserPin(lat, lng, photoUrl, initial, borderColor, onClick, pixelO
 // Track real positions for collision detection (lat/lng before any offset)
 var pinPositions = {}; // key -> {lat, lng}
 var PIN_SIZE = 52;
-var PIN_OVERLAP = 5; // ~10% overlap to show intent
-var PIN_STEP = PIN_SIZE - PIN_OVERLAP; // horizontal step per pin
+var PIN_OVERLAP = 5;
+var PIN_STEP = PIN_SIZE - PIN_OVERLAP;
+var CLUSTER_THRESHOLD = 0.00015; // lat+lng delta to count as same spot
 
-// Count how many existing pins share the same spot, return {ox, zIdx}
-function getPixelOffset(lat, lng, myKey) {
-  var threshold = 0.00015;
-  var sameSpot = [];
-  // Check venue pin
-  if (Math.abs(lat - VENUE_LAT) + Math.abs(lng - VENUE_LNG) < threshold) sameSpot.push('venue');
-  // Check other pins
+// Full relayout: find all clusters and symmetrically spread every pin
+function relayoutPins() {
+  // Build list of all pin keys + positions (including venue)
+  var all = [];
+  all.push({ key: 'venue', lat: VENUE_LAT, lng: VENUE_LNG });
   Object.keys(pinPositions).forEach(function(k) {
-    if (k === myKey) return;
     var p = pinPositions[k];
-    if (Math.abs(lat - p.lat) + Math.abs(lng - p.lng) < threshold) sameSpot.push(k);
+    all.push({ key: k, lat: p.lat, lng: p.lng });
   });
-  if (sameSpot.length === 0) return { ox: 0, zIdx: 0 };
-  var idx = sameSpot.length;
-  var total = idx + 1;
-  return {
-    ox: (idx - (total - 1) / 2) * PIN_STEP,
-    zIdx: idx // higher index = on top, creates the cut-in stack
-  };
+
+  // Find clusters via greedy grouping
+  var assigned = {};
+  var clusters = [];
+  for (var i = 0; i < all.length; i++) {
+    if (assigned[all[i].key]) continue;
+    var cluster = [all[i]];
+    assigned[all[i].key] = true;
+    for (var j = i + 1; j < all.length; j++) {
+      if (assigned[all[j].key]) continue;
+      // Check if close to any member of this cluster
+      for (var c = 0; c < cluster.length; c++) {
+        if (Math.abs(all[j].lat - cluster[c].lat) + Math.abs(all[j].lng - cluster[c].lng) < CLUSTER_THRESHOLD) {
+          cluster.push(all[j]);
+          assigned[all[j].key] = true;
+          break;
+        }
+      }
+    }
+    clusters.push(cluster);
+  }
+
+  // Apply offsets per cluster
+  clusters.forEach(function(cluster) {
+    var n = cluster.length;
+    for (var i = 0; i < n; i++) {
+      var ox = n > 1 ? (i - (n - 1) / 2) * PIN_STEP : 0;
+      var zIdx = i;
+      var key = cluster[i].key;
+      if (key === 'venue') {
+        if (venuePinRef && typeof venuePinRef.setPixelOffsetX === 'function') {
+          venuePinRef.setPixelOffsetX(ox);
+          if (venuePinRef.div) venuePinRef.div.style.zIndex = zIdx;
+        }
+      } else if (markers[key]) {
+        if (typeof markers[key].setPixelOffsetX === 'function') markers[key].setPixelOffsetX(ox);
+        if (markers[key].div) markers[key].div.style.zIndex = zIdx;
+      }
+    }
+  });
 }
 
 // Haversine distance between two points in meters
@@ -559,16 +595,13 @@ function upsertAppUser(u) {
   const pic = proxyUrl(u.profile_picture) || null;
   peopleData[key] = { name: name, type: 'app', pic: pic, user_id: u.user_id };
   pinPositions[key] = { lat: u.latitude, lng: u.longitude };
-  var spread = getPixelOffset(u.latitude, u.longitude, key);
   if (markers[key]) {
     markers[key].setPosition(new google.maps.LatLng(u.latitude, u.longitude));
-    if (typeof markers[key].setPixelOffsetX === 'function') {
-      markers[key].setPixelOffsetX(spread.ox);
-    }
   } else {
     const tapHandler = () => openUserSheet(u.user_id);
-    markers[key] = createUserPin(u.latitude, u.longitude, pic, (name[0] || '?').toUpperCase(), '#9b59b6', tapHandler, spread.ox, spread.zIdx);
+    markers[key] = createUserPin(u.latitude, u.longitude, pic, (name[0] || '?').toUpperCase(), '#9b59b6', tapHandler, 0, 0);
   }
+  relayoutPins();
 }
 
 function upsertGuest(g) {
@@ -576,28 +609,26 @@ function upsertGuest(g) {
   const name = g.display_name || 'Guest';
   peopleData[key] = { name: name, type: 'guest' };
   pinPositions[key] = { lat: g.latitude, lng: g.longitude };
-  var spread = getPixelOffset(g.latitude, g.longitude, key);
   if (markers[key]) {
     markers[key].setPosition(new google.maps.LatLng(g.latitude, g.longitude));
-    if (typeof markers[key].setPixelOffsetX === 'function') markers[key].setPixelOffsetX(spread.ox);
   } else {
     const tapHandler = () => openGuestUserSheet(name);
-    markers[key] = createUserPin(g.latitude, g.longitude, null, (name[0] || '?').toUpperCase(), '#2ecc71', tapHandler, spread.ox, spread.zIdx);
+    markers[key] = createUserPin(g.latitude, g.longitude, null, (name[0] || '?').toUpperCase(), '#2ecc71', tapHandler, 0, 0);
   }
+  relayoutPins();
 }
 
 function upsertSelf(lat, lng) {
   console.log('[bounce-geo] upsertSelf', lat, lng);
   const key = 'self';
   pinPositions[key] = { lat: lat, lng: lng };
-  var spread = getPixelOffset(lat, lng, key);
   if (markers[key]) {
     markers[key].setPosition(new google.maps.LatLng(lat, lng));
-    if (typeof markers[key].setPixelOffsetX === 'function') markers[key].setPixelOffsetX(spread.ox);
   } else {
     const initial = myName ? myName[0].toUpperCase() : 'Y';
-    markers[key] = createUserPin(lat, lng, null, initial, '#4a9eff', null, spread.ox, spread.zIdx);
+    markers[key] = createUserPin(lat, lng, null, initial, '#4a9eff', null, 0, 0);
   }
+  relayoutPins();
 }
 
 function removeMarker(key) {
@@ -606,6 +637,7 @@ function removeMarker(key) {
     delete markers[key];
   }
   delete pinPositions[key];
+  relayoutPins();
 }
 
 // Also update bottom sheet people list to show profile pics
