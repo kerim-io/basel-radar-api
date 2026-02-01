@@ -362,13 +362,19 @@ async def places_autocomplete(
             }
         }
 
-    # Build two request bodies — one per type batch (API allows max 5 types)
+    # Build request bodies: two type-filtered batches + one unfiltered fallback.
+    # The unfiltered request catches places whose primaryType doesn't match
+    # our type lists (e.g. private members' clubs like Shoreditch House).
     bodies = []
     for type_batch in [VENUE_TYPES_A, VENUE_TYPES_B]:
         b = {"input": query, "includedPrimaryTypes": type_batch}
         if location_bias:
             b["locationBias"] = location_bias
         bodies.append(b)
+    unfiltered = {"input": query}
+    if location_bias:
+        unfiltered["locationBias"] = location_bias
+    bodies.append(unfiltered)
 
     async def _autocomplete_request(session, body, ssl_ctx):
         """Fire one autocomplete request, return suggestions list or []."""
@@ -384,16 +390,17 @@ async def places_autocomplete(
     try:
         ssl_ctx = get_ssl_context()
         async with aiohttp.ClientSession() as session:
-            # Fire both type-batch requests in parallel
-            results_a, results_b = await asyncio.gather(
+            # Fire all three requests in parallel (type batch A, B, and unfiltered)
+            results_a, results_b, results_c = await asyncio.gather(
                 _autocomplete_request(session, bodies[0], ssl_ctx),
                 _autocomplete_request(session, bodies[1], ssl_ctx),
+                _autocomplete_request(session, bodies[2], ssl_ctx),
             )
 
-            # Merge and deduplicate raw suggestions
+            # Merge and deduplicate raw suggestions (typed results first for ranking)
             seen_ids = set()
             raw_predictions = []
-            for pred in results_a + results_b:
+            for pred in results_a + results_b + results_c:
                 pid = pred.get("placePrediction", {}).get("placeId")
                 if pid and pid not in seen_ids:
                     raw_predictions.append(pred)
