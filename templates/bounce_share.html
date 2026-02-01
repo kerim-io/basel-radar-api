@@ -265,7 +265,9 @@ function defineVenuePinOverlay() {
       panes.overlayMouseTarget.appendChild(this.div);
     }
     draw() {
+      if (!this.div) return;
       const projection = this.getProjection();
+      if (!projection) return;
       const pos = projection.fromLatLngToDivPixel(this.position);
       if (pos) {
         this.div.style.left = (pos.x + this.pixelOffsetX) + 'px';
