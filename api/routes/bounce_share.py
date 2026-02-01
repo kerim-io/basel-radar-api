@@ -10,7 +10,7 @@ from db.database import get_async_session, create_async_session
 from db.models import Bounce, BounceInvite, BounceLocationShare, BounceGuestLocation, User
 from api.dependencies import get_current_user
 from api.routes.websocket import manager
-from api.routes.bounces import get_bounce_participants
+from api.routes.bounces import get_bounce_participants, get_venue_photo_url
 from core.config import settings
 
 router = APIRouter(tags=["bounce-share"])
@@ -80,6 +80,9 @@ async def bounce_share_page(
 
     bounce, creator = row
 
+    # Fetch venue photo URL
+    venue_photo_url = await get_venue_photo_url(db, bounce.places_fk_id) or ""
+
     # Read the template and inject variables
     import os
     template_path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "bounce_share.html")
@@ -94,6 +97,7 @@ async def bounce_share_page(
     html = html.replace("{{MESSAGE}}", bounce.message or "")
     html = html.replace("{{CREATOR_NAME}}", creator.nickname or creator.first_name or "Someone")
     html = html.replace("{{SHARE_TOKEN}}", share_token)
+    html = html.replace("{{VENUE_PHOTO_URL}}", venue_photo_url)
     html = html.replace("{{GOOGLE_MAPS_API_KEY}}", settings.GOOGLE_MAPS_API_KEY)
 
     # Derive WS base from the incoming request

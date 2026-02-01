@@ -52,12 +52,13 @@ const VENUE_LAT = {{LATITUDE}};
 const VENUE_LNG = {{LONGITUDE}};
 const SHARE_TOKEN = "{{SHARE_TOKEN}}";
 const WS_BASE = "{{WS_BASE}}";
+const VENUE_PHOTO_URL = "{{VENUE_PHOTO_URL}}";
+const VENUE_NAME = "{{VENUE_NAME}}";
 const STORAGE_KEY_ID = 'bounce_guest_id_' + SHARE_TOKEN;
 const STORAGE_KEY_NAME = 'bounce_guest_name_' + SHARE_TOKEN;
 
 let map, ws, geoWatchId;
 let markers = {};       // keyed by "user_{id}" or "guest_{id}"
-let labelOverlays = {}; // name labels keyed same as markers
 let myGuestId;
 let myName;
 let reconnectTimer;
@@ -136,21 +137,127 @@ function initMap() {
       ]
     });
 
-    // Venue marker — destination pin
-    new google.maps.Marker({
-      position: { lat: VENUE_LAT, lng: VENUE_LNG },
-      map: map,
-      title: "{{VENUE_NAME}}",
-      icon: {
-        url: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="50" viewBox="0 0 40 50"><path d="M20 0C9 0 0 9 0 20c0 15 20 30 20 30s20-15 20-30C40 9 31 0 20 0z" fill="#ff4444" stroke="#fff" stroke-width="2"/><circle cx="20" cy="18" r="8" fill="#fff"/><text x="20" y="22" text-anchor="middle" font-size="14" font-weight="bold" fill="#ff4444">&#9733;</text></svg>'),
-        scaledSize: new google.maps.Size(40, 50),
-        anchor: new google.maps.Point(20, 50)
-      }
-    });
+    // Venue marker — circular image pin like iOS app
+    createVenueMarker();
   }
 
   connectWebSocket();
   startGeolocation();
+}
+
+function createVenueMarker() {
+  const size = 56;       // pin diameter
+  const border = 3;
+  const borderColor = '#4a9eff'; // blue border like iOS BouncePinIcon
+  const pos = { lat: VENUE_LAT, lng: VENUE_LNG };
+
+  function setVenueIcon(iconUrl) {
+    const venueMarker = new google.maps.Marker({
+      position: pos,
+      map: map,
+      title: VENUE_NAME,
+      icon: {
+        url: iconUrl,
+        scaledSize: new google.maps.Size(size, size + 18),
+        anchor: new google.maps.Point(size / 2, size + 18)
+      },
+      zIndex: 999
+    });
+  }
+
+  // Draw circular pin on canvas: image clipped to circle with blue border + name label below
+  function drawPin(img) {
+    const canvas = document.createElement('canvas');
+    const w = size;
+    const h = size + 18; // extra space for label
+    canvas.width = w * 2;  // retina
+    canvas.height = h * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+
+    const cx = w / 2;
+    const cy = w / 2;
+    const r = (w - border * 2) / 2;
+
+    // Shadow
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+
+    // Blue border circle
+    ctx.beginPath();
+    ctx.arc(cx, cy, w / 2 - 1, 0, Math.PI * 2);
+    ctx.fillStyle = borderColor;
+    ctx.fill();
+
+    // Reset shadow
+    ctx.shadowColor = 'transparent';
+
+    if (img) {
+      // Clip to inner circle and draw image
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.clip();
+      // Cover-fit the image into the circle
+      const aspect = img.width / img.height;
+      let dw, dh, dx, dy;
+      if (aspect > 1) {
+        dh = r * 2;
+        dw = dh * aspect;
+        dx = cx - dw / 2;
+        dy = cy - r;
+      } else {
+        dw = r * 2;
+        dh = dw / aspect;
+        dx = cx - r;
+        dy = cy - dh / 2;
+      }
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
+    } else {
+      // Fallback: gray circle with venue initial
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#555';
+      ctx.fill();
+      ctx.font = 'bold 20px -apple-system, sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText((VENUE_NAME[0] || '?').toUpperCase(), cx, cy);
+    }
+
+    // Name label below pin
+    const label = VENUE_NAME.length > 14 ? VENUE_NAME.substring(0, 13) + '\u2026' : VENUE_NAME;
+    ctx.font = '600 9px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    // Label background
+    const metrics = ctx.measureText(label);
+    const lw = metrics.width + 6;
+    const lh = 13;
+    const lx = cx - lw / 2;
+    const ly = w + 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(lx, ly, lw, lh, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, cx, ly + 2);
+
+    return canvas.toDataURL();
+  }
+
+  if (VENUE_PHOTO_URL) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => setVenueIcon(drawPin(img));
+    img.onerror = () => setVenueIcon(drawPin(null));
+    img.src = VENUE_PHOTO_URL;
+  } else {
+    setVenueIcon(drawPin(null));
+  }
 }
 
 function connectWebSocket() {
