@@ -398,10 +398,11 @@ function openSheet() {
     const p = peopleData[key];
     const color = p.type === 'app' ? colors.app : colors.guest;
     const initial = (p.name[0] || '?').toUpperCase();
+    const tap = p.type === 'app' && p.user_id ? 'onclick="closeSheet();openUserSheet(' + p.user_id + ')"' : 'onclick="closeSheet();openGuestUserSheet(\'' + p.name.replace(/'/g, "\\'") + '\')"';
     if (p.pic) {
-      html += '<div class="person-row"><div class="person-avatar" style="border:2px solid ' + color + ';padding:0;overflow:hidden"><img src="' + p.pic + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentNode.style.background=\'' + color + '\';this.parentNode.innerHTML=\'' + initial + '\'"></div><div class="person-name">' + p.name + '</div></div>';
+      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="border:2px solid ' + color + ';padding:0;overflow:hidden"><img src="' + p.pic + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" onerror="this.parentNode.style.background=\'' + color + '\';this.parentNode.innerHTML=\'' + initial + '\'"></div><div class="person-name">' + p.name + '</div></div>';
     } else {
-      html += '<div class="person-row"><div class="person-avatar" style="background:' + color + '">' + initial + '</div><div class="person-name">' + p.name + '</div></div>';
+      html += '<div class="person-row" style="cursor:pointer" ' + tap + '><div class="person-avatar" style="background:' + color + '">' + initial + '</div><div class="person-name">' + p.name + '</div></div>';
     }
   });
 
@@ -437,6 +438,9 @@ function openUserSheet(userId) {
   nameEl.textContent = cached ? cached.name : 'Loading...';
   followersEl.textContent = '-';
   followingEl.textContent = '-';
+  document.querySelector('.us-stats').style.display = 'flex';
+  var gMsg = document.getElementById('us-guest-msg');
+  if (gMsg) gMsg.style.display = 'none';
 
   document.getElementById('user-sheet-backdrop').style.display = 'block';
   sheet.classList.add('open');
@@ -459,6 +463,30 @@ function openUserSheet(userId) {
 function closeUserSheet() {
   document.getElementById('user-sheet').classList.remove('open');
   document.getElementById('user-sheet-backdrop').style.display = 'none';
+}
+
+function openGuestUserSheet(name) {
+  const picEl = document.getElementById('us-pic');
+  const nameEl = document.getElementById('us-name');
+
+  const letter = (name[0] || '?').toUpperCase();
+  picEl.innerHTML = '<span class="initial">' + letter + '</span>';
+  nameEl.textContent = name;
+
+  // Hide stats, show "not on bounce" message
+  document.querySelector('.us-stats').style.display = 'none';
+  let msg = document.getElementById('us-guest-msg');
+  if (!msg) {
+    msg = document.createElement('div');
+    msg.id = 'us-guest-msg';
+    msg.style.cssText = 'text-align:center;color:#888;font-size:14px';
+    document.querySelector('.us-stats').insertAdjacentElement('afterend', msg);
+  }
+  msg.textContent = 'Not on Bounce yet';
+  msg.style.display = 'block';
+
+  document.getElementById('user-sheet-backdrop').style.display = 'block';
+  document.getElementById('user-sheet').classList.add('open');
 }
 
 function connectWebSocket() {
