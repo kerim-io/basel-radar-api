@@ -113,7 +113,8 @@ const VENUE_LAT = {{LATITUDE}};
 const VENUE_LNG = {{LONGITUDE}};
 const SHARE_TOKEN = "{{SHARE_TOKEN}}";
 const WS_BASE = "{{WS_BASE}}";
-const VENUE_PHOTO_URL = "{{VENUE_PHOTO_URL}}";
+const _RAW_VENUE_PHOTO = "{{VENUE_PHOTO_URL}}";
+const VENUE_PHOTO_URL = _RAW_VENUE_PHOTO && !_RAW_VENUE_PHOTO.startsWith('data:') ? '/bounce/img-proxy?url=' + encodeURIComponent(_RAW_VENUE_PHOTO) : _RAW_VENUE_PHOTO;
 const VENUE_NAME_STR = "{{VENUE_NAME}}";
 const VENUE_ADDRESS_STR = "{{VENUE_ADDRESS}}";
 const CREATOR_NAME_STR = "{{CREATOR_NAME}}";
@@ -496,11 +497,17 @@ function createUserPin(lat, lng, photoUrl, initial, borderColor) {
   return pin;
 }
 
+// Proxy external URLs through our backend to avoid CORS/CORP blocks
+function proxyUrl(url) {
+  if (!url) return null;
+  if (url.startsWith('data:')) return url; // base64 is fine as-is
+  return '/bounce/img-proxy?url=' + encodeURIComponent(url);
+}
+
 function upsertAppUser(u) {
   const key = 'user_' + u.user_id;
   const name = u.nickname || 'App User';
-  const pic = u.profile_picture || null;
-  console.log('[bounce-ws] app user', u.user_id, name, 'pic:', pic ? pic.substring(0, 80) + '...' : 'none');
+  const pic = proxyUrl(u.profile_picture) || null;
   peopleData[key] = { name: name, type: 'app', pic: pic };
   if (markers[key]) {
     markers[key].setPosition(new google.maps.LatLng(u.latitude, u.longitude));

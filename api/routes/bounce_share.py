@@ -1,8 +1,9 @@
 import secrets
 import json
 import logging
+import hashlib
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -60,6 +61,29 @@ async def create_share_link(
     base = str(request.base_url).rstrip("/")
     share_url = f"{base}/bounce/share/{bounce.share_token}"
     return {"share_url": share_url, "share_token": bounce.share_token}
+
+
+@router.get("/bounce/img-proxy")
+async def image_proxy(url: str = Query(...)):
+    """Proxy external images to avoid CORS/CORP blocks (e.g. Instagram CDN)."""
+    import httpx
+    if not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Only HTTPS URLs allowed")
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Upstream error")
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            return Response(
+                content=resp.content,
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=86400"}
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Upstream timeout")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to fetch image")
 
 
 @router.get("/bounce/share/{share_token}", response_class=HTMLResponse)
