@@ -218,8 +218,11 @@ async def bounce_share_page(
         html = html.replace("{{VENUE_SHEET}}", f.read())
     with open(os.path.join(tpl_dir, "user_sheet.html"), "r") as f:
         html = html.replace("{{USER_SHEET}}", f.read())
+    with open(os.path.join(tpl_dir, "feed_item.html"), "r") as f:
+        feed_item_html = f.read()
     with open(os.path.join(tpl_dir, "chat_panel.html"), "r") as f:
-        html = html.replace("{{CHAT_PANEL}}", f.read())
+        chat_panel_html = f.read().replace("{{FEED_ITEM}}", feed_item_html)
+    html = html.replace("{{CHAT_PANEL}}", chat_panel_html)
 
     # Replace template placeholders
     html = html.replace("{{VENUE_NAME}}", bounce.venue_name or "")
