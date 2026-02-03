@@ -274,7 +274,7 @@ async def bounce_guest_websocket(
         await manager.connect_guest(websocket, bounce_id)
         logger.info(f"Guest '{name}' ({guest_id}) connected to bounce {bounce_id}")
 
-        # Upsert guest record on connect (so they show in attendee list even without location)
+        # Check if this guest already exists (reconnect vs first join)
         result = await db.execute(
             select(BounceGuestLocation).where(
                 BounceGuestLocation.bounce_id == bounce_id,
@@ -282,10 +282,14 @@ async def bounce_guest_websocket(
             )
         )
         guest_rec = result.scalar_one_or_none()
+        is_new_guest = guest_rec is None
+
         if guest_rec:
+            # Returning guest — just update name, keep them as-is
             guest_rec.display_name = name
             guest_rec.is_connected = True
         else:
+            # Brand new guest joining for the first time
             guest_rec = BounceGuestLocation(
                 bounce_id=bounce_id,
                 guest_id=guest_id,
@@ -298,33 +302,34 @@ async def bounce_guest_websocket(
             db.add(guest_rec)
         await db.commit()
 
-        # Notify everyone that a guest joined
-        join_msg = {
-            "type": "guest_joined",
-            "bounce_id": bounce_id,
-            "guest_id": guest_id,
-            "display_name": name
-        }
-        await manager.send_to_bounce(bounce_id, join_msg)
-        participants = await get_bounce_participants(db, bounce_id)
-        for pid in participants:
-            await manager.send_to_user(pid, join_msg)
+        # Only notify on FIRST join, not on reconnect/refresh
+        if is_new_guest:
+            join_msg = {
+                "type": "guest_joined",
+                "bounce_id": bounce_id,
+                "guest_id": guest_id,
+                "display_name": name
+            }
+            await manager.send_to_bounce(bounce_id, join_msg)
+            participants = await get_bounce_participants(db, bounce_id)
+            for pid in participants:
+                await manager.send_to_user(pid, join_msg)
 
-        # Send push notification to app participants
-        from services.apns_service import NotificationPayload, NotificationType
-        from services.tasks import enqueue_notification, payload_to_dict
-        for pid in participants:
-            payload = NotificationPayload(
-                notification_type=NotificationType.GUEST_JOINED,
-                title="Guest Joined",
-                body=f"{name} joined the bounce at {bounce.venue_name}",
-                actor_id=0,
-                actor_nickname=name,
-                bounce_id=bounce.id,
-                bounce_venue_name=bounce.venue_name,
-                bounce_place_id=bounce.place_id
-            )
-            enqueue_notification(pid, payload_to_dict(payload))
+            # Send push notification to app participants
+            from services.apns_service import NotificationPayload, NotificationType
+            from services.tasks import enqueue_notification, payload_to_dict
+            for pid in participants:
+                payload = NotificationPayload(
+                    notification_type=NotificationType.GUEST_JOINED,
+                    title="Guest Joined",
+                    body=f"{name} joined the bounce at {bounce.venue_name}",
+                    actor_id=0,
+                    actor_nickname=name,
+                    bounce_id=bounce.id,
+                    bounce_venue_name=bounce.venue_name,
+                    bounce_place_id=bounce.place_id
+                )
+                enqueue_notification(pid, payload_to_dict(payload))
 
         # Send initial state
         initial_state = await _build_initial_state(db, bounce_id)
@@ -480,7 +485,6 @@ async def bounce_guest_websocket(
         logger.error(f"Guest WS error for bounce: {e}")
     finally:
         if bounce_id is not None:
-            # Mark guest as disconnected and not sharing
             try:
                 result = await db.execute(
                     select(BounceGuestLocation).where(
@@ -489,26 +493,44 @@ async def bounce_guest_websocket(
                     )
                 )
                 guest_loc = result.scalar_one_or_none()
-                if guest_loc:
+
+                if explicit_leave and guest_loc:
+                    # Explicit leave — delete the record entirely
+                    await db.delete(guest_loc)
+                    await db.commit()
+                elif guest_loc:
+                    # Browser closed / WS dropped — only stop location sharing
+                    # Guest stays as a permanent attendee
                     guest_loc.is_sharing = False
-                    guest_loc.is_connected = False
+                    guest_loc.is_connected = True  # still an attendee
                     await db.commit()
             except Exception:
                 pass
 
-            # Send guest_left for explicit leave, guest_disconnected for WS drop
             try:
-                msg_type = "guest_left" if explicit_leave else "guest_disconnected"
-                notify_msg = {
-                    "type": msg_type,
-                    "bounce_id": bounce_id,
-                    "guest_id": guest_id,
-                    "display_name": name
-                }
-                await manager.send_to_bounce(bounce_id, notify_msg)
-                participants = await get_bounce_participants(db, bounce_id)
-                for pid in participants:
-                    await manager.send_to_user(pid, notify_msg)
+                if explicit_leave:
+                    # Only send guest_left on explicit leave (removes from attendee list)
+                    notify_msg = {
+                        "type": "guest_left",
+                        "bounce_id": bounce_id,
+                        "guest_id": guest_id,
+                        "display_name": name
+                    }
+                    await manager.send_to_bounce(bounce_id, notify_msg)
+                    participants = await get_bounce_participants(db, bounce_id)
+                    for pid in participants:
+                        await manager.send_to_user(pid, notify_msg)
+                else:
+                    # WS drop — just stop showing location on map
+                    stop_msg = {
+                        "type": "guest_location_stopped",
+                        "bounce_id": bounce_id,
+                        "guest_id": guest_id
+                    }
+                    await manager.send_to_bounce(bounce_id, stop_msg)
+                    participants = await get_bounce_participants(db, bounce_id)
+                    for pid in participants:
+                        await manager.send_to_user(pid, stop_msg)
             except Exception:
                 pass
 

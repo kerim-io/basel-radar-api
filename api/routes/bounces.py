@@ -1373,6 +1373,7 @@ async def leave_bounce(
     """
     Leave a bounce (remove attendance record).
     """
+    # Delete attendance record
     result = await db.execute(
         select(BounceAttendee).where(
             BounceAttendee.bounce_id == bounce_id,
@@ -1381,10 +1382,24 @@ async def leave_bounce(
     )
     attendee = result.scalar_one_or_none()
 
-    if not attendee:
-        raise HTTPException(status_code=404, detail="Not checked in to this bounce")
+    if attendee:
+        await db.delete(attendee)
 
-    await db.delete(attendee)
+    # Delete invite record so user is fully removed from the bounce
+    invite_result = await db.execute(
+        select(BounceInvite).where(
+            BounceInvite.bounce_id == bounce_id,
+            BounceInvite.user_id == current_user.id
+        )
+    )
+    invite = invite_result.scalar_one_or_none()
+
+    if not attendee and not invite:
+        raise HTTPException(status_code=404, detail="Not part of this bounce")
+
+    if invite:
+        await db.delete(invite)
+
     await db.commit()
 
     # Get updated attendee count
@@ -1735,12 +1750,10 @@ async def get_shared_locations(
         for share, user in rows
     ]
 
-    # Get guest locations
-    # Get connected guests (regardless of whether they're sharing location)
+    # Get all guests for this bounce (permanent attendees until they explicitly leave)
     guest_result = await db.execute(
         select(BounceGuestLocation).where(
-            BounceGuestLocation.bounce_id == bounce_id,
-            BounceGuestLocation.is_connected == True
+            BounceGuestLocation.bounce_id == bounce_id
         )
     )
     guest_rows = guest_result.scalars().all()

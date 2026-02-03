@@ -249,10 +249,11 @@ class APNsService:
         if not self._client or not self._private_key:
             return False, "APNs not initialized"
 
-        # Use the token's sandbox flag to determine which server to use
-        base_url = APNS_SANDBOX_URL if is_sandbox else APNS_PRODUCTION_URL
+        # Use server config to determine which APNs server to use
+        use_sandbox = settings.APNS_USE_SANDBOX
+        base_url = APNS_SANDBOX_URL if use_sandbox else APNS_PRODUCTION_URL
         url = f"{base_url}/3/device/{token}"
-        logger.info(f"APNs: Sending to {'SANDBOX' if is_sandbox else 'PRODUCTION'} server")
+        logger.info(f"APNs: Sending to {'SANDBOX' if use_sandbox else 'PRODUCTION'} server")
 
         headers = {
             "authorization": f"bearer {self._get_jwt_token()}",
@@ -378,7 +379,7 @@ class APNsService:
 
         success = False
         for device_token in device_tokens:
-            base_url = APNS_SANDBOX_URL if device_token.is_sandbox else APNS_PRODUCTION_URL
+            base_url = APNS_SANDBOX_URL if settings.APNS_USE_SANDBOX else APNS_PRODUCTION_URL
             url = f"{base_url}/3/device/{device_token.device_token}"
 
             headers = {
